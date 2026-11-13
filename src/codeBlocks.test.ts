@@ -18,3 +18,11 @@ describe("coding response presentation", () => {
     expect(splitCodeBlocks("```python\nprint('unfinished')")).toEqual([{ type: "text", content: "```python\nprint('unfinished')" }]);
   });
 });
+
+import { describe as describeRaw, it as itRaw, expect as expectRaw } from "vitest";
+describeRaw("raw HTML rendering", () => {
+  itRaw("renders a complete HTML document as a code block", () => {
+    const html = '<!DOCTYPE html><html><head></head><body><script>let x=1;</script></body></html>';
+    expectRaw(splitCodeBlocks(html)).toEqual([{type:"code",content:html,language:"html"}]);
+  });
+});
