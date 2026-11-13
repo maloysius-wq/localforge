@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import { isTauri } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   Activity, ArrowRight, ArrowUp, BookOpen, CheckCircle2, ChevronDown,
   ChevronRight, Code2, FileCode2, Folder, FolderOpen,
   FolderPlus, HardDrive, History, Info, LayoutPanelLeft, Menu, MessageSquare,
   Moon, PanelRightClose, Plus, Settings2, ShieldCheck, Sparkles,
-  Sun, Terminal, Trash2, X, StopCircle, RefreshCw, RotateCcw, Eye, ClipboardCheck,
+  Sun, Terminal, Trash2, X, StopCircle, RefreshCw, RotateCcw, Eye, ClipboardCheck, Maximize2, Minimize2,
 } from "lucide-react";
 import {
   loadWorkspace, newId, projectLabel, saveWorkspace, uniqueProject,
@@ -15,7 +16,8 @@ import {
 } from "./storage";
 import { ModelManager } from "./ModelManager";
 import { splitCodeBlocks } from "./codeBlocks";
-import { codeTaskFor, containsImplementation, retryForActualCode } from "./codeTasks";
+import { containsImplementation, retryForActualCode } from "./codeTasks";
+import { prepareGeneration } from "./conversationContext";
 import { inspectProject, readProjectFile, applyProjectChange, undoProjectChange, suggestFilename,
   type ProjectSnapshot, type ProjectFile } from "./projectTools";
 import { checkForUpdates, installUpdate, onUpdateProgress, type UpdateInfo } from "./updates";
@@ -176,8 +178,16 @@ export default function App() {
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [modelBusy, setModelBusy] = useState(false);
-  const [modelPath, setModelPath] = useState<string | null>(null);
-  const [threads, setThreads] = useState(2);
+  const [modelPath, setModelPath] = useState<string | null>(() => {
+    try { const value = JSON.parse(localStorage.getItem("localforge.model-path.v1") || "null"); return typeof value === "string" ? value : null; } catch { return null; }
+  });
+  const [threads, setThreads] = useState(() => {
+    const n = Number(localStorage.getItem("localforge.threads.v1") || 2);
+    return Number.isInteger(n) && n >= 1 && n <= 16 ? n : 2;
+  });
+  const [autoLoad, setAutoLoad] = useState(() => localStorage.getItem("localforge.auto-load.v1") !== "false");
+  const [fullscreen, setFullscreen] = useState(() => isTauri());
+  const startupRef = useRef(false);
   const [generating, setGenerating] = useState(false);
   const [liveText, setLiveText] = useState("");
   const [inspected, setInspected] = useState<{ projectId: string; data: ProjectSnapshot } | null>(null);
@@ -198,6 +208,11 @@ export default function App() {
     .filter(t => t.projectId === workspace.activeProjectId)
     .sort((a, b) => b.updatedAt - a.updatedAt), [workspace.threads, workspace.activeProjectId]);
 
+  useEffect(() => {
+    localStorage.setItem("localforge.model-path.v1", JSON.stringify(modelPath));
+    localStorage.setItem("localforge.threads.v1", String(threads));
+    localStorage.setItem("localforge.auto-load.v1", String(autoLoad));
+  }, [modelPath, threads, autoLoad]);
   useEffect(() => {
     document.documentElement.dataset.theme = workspace.theme;
     if (!saveWorkspace(workspace)) setStorageWarning(true);
@@ -220,13 +235,49 @@ export default function App() {
     if (!isTauri()) return;
     let disposed = false;
     const unsubscribe: Array<() => void> = [];
-    void getStatus().then(value => { if (!disposed) setEngine(value); }).catch(error => { if (!disposed) setNotice(String(error)); });
-    void getModelInfo().then(value => { if (!disposed) setModel(value); }).catch(() => {});
+    if (!startupRef.current) {
+      startupRef.current = true;
+      void (async () => {
+        try {
+          const [status, info] = await Promise.all([getStatus(), getModelInfo()]);
+          if (disposed) return;
+          setEngine(status); setModel(info);
+          if (autoLoad && !status.running && (info.installed || modelPath)) {
+            setModelBusy(true);
+            setNotice("Loading local CPU model automatically…");
+            try {
+              const started = await startModel(modelPath, threads);
+              if (!disposed) { setEngine(started); setNotice("Local CPU model loaded automatically."); }
+            } catch (error) {
+              if (!disposed) setNotice("Automatic model load failed. Open Settings to retry: " + String(error));
+            } finally { if (!disposed) setModelBusy(false); }
+          }
+        } catch (error) { if (!disposed) setNotice("Startup check failed: " + String(error)); }
+      })();
+    }
     void onToken(token => {
       if (pendingRef.current?.requestId === token.requestId) setLiveText(text => text + token.delta);
     }).then(off => { if (disposed) off(); else unsubscribe.push(off); });
     void onDownload(value => { if (!disposed) setProgress(value); }).then(off => { if (disposed) off(); else unsubscribe.push(off); });
     return () => { disposed = true; unsubscribe.forEach(off => off()); };
+  }, []);
+
+  async function toggleFullscreen() {
+    if (!isTauri()) return;
+    try {
+      const current = getCurrentWindow();
+      const wasFullscreen = await current.isFullscreen();
+      await current.setFullscreen(!wasFullscreen);
+      setFullscreen(!wasFullscreen);
+    } catch (error) { setNotice("Could not change fullscreen: " + String(error)); }
+  }
+  useEffect(() => {
+    if (!isTauri()) return;
+    const listener = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "F11") { event.preventDefault(); void toggleFullscreen(); }
+    };
+    window.addEventListener("keydown", listener);
+    return () => window.removeEventListener("keydown", listener);
   }, []);
 
   async function handleDownload() {
@@ -373,7 +424,7 @@ export default function App() {
     const message: ChatMessage = { id: newId(), role: "user", content, createdAt: now };
     const current = workspace.threads.find(t => t.id === workspace.activeThreadId);
     const threadId = current?.id || newId();
-    const context = (current?.messages ?? []).slice(activeProject && inspected?.projectId === activeProject.id ? -4 : -10).map(m => ({ role: m.role === "user" ? "user" as const : "assistant" as const, content: m.content }));
+    const history = (current?.messages ?? []).filter(m => m.role === "user" || m.role === "assistant");
     setWorkspace(s => {
       const exists = s.threads.some(t => t.id === threadId);
       const threads = exists ? s.threads.map(t => t.id === threadId
@@ -389,16 +440,15 @@ export default function App() {
     pendingRef.current = { requestId, threadId };
     setLiveText("");
     setGenerating(true);
-    const projectContext = activeProject && inspected?.projectId === activeProject.id ? inspected.data.context : null;
-    const task = codeTaskFor(content, current?.messages ?? []);
+    const snapshot = activeProject && inspected?.projectId === activeProject.id ? inspected.data.context : null;
+    const { task, messages: codeMessages, projectContext } = prepareGeneration(content, history, snapshot);
     void (async () => {
       try {
-        const codeMessages = task ? [{ role: "user" as const, content: task.request }] : [...context, { role: "user" as const, content }];
         let reply = await generate(requestId, codeMessages, projectContext, !!task);
         if (task && !canceledRef.current && !containsImplementation(reply, task.target)) {
           setNotice("Local model returned no source code. Retrying once with a code-first request…");
           setLiveText("");
-          reply = await generate(requestId, [{ role: "user", content: retryForActualCode(task) }], projectContext, true);
+          reply = await generate(requestId, [{ role: "user", content: retryForActualCode(task) + "\n\n" + codeMessages[0].content.slice(-4600) }], projectContext, true);
         }
         if (canceledRef.current) {
           setNotice("Generation stopped. No partial file was saved.");
@@ -457,7 +507,7 @@ export default function App() {
           <strong className="topbar-title">{activeProject?.name || "Scratchpad"}</strong>
           <ChevronDown size={15} className="muted-chevron"/>
         </div>
-        <div className="top-actions"><span className={`engine-pill ${engine.running ? "ready" : ""}`}><span/> {engine.running ? "CPU model ready" : "Engine offline"}</span>
+        <div className="top-actions"><button className="icon-button" type="button" title={fullscreen ? "Exit fullscreen (F11)" : "Enter fullscreen (F11)"} aria-label={fullscreen ? "Exit fullscreen" : "Enter fullscreen"} onClick={() => void toggleFullscreen()}>{fullscreen ? <Minimize2 size={19}/> : <Maximize2 size={19}/>}</button><span className={`engine-pill ${engine.running ? "ready" : ""}`}><span/> {engine.running ? "CPU model ready" : "Engine offline"}</span>
           <button className={`icon-button ${detailsOpen ? "toggled" : ""}`} title={detailsOpen ? "Hide details" : "Show details"} aria-label={detailsOpen ? "Hide details" : "Show details"} onClick={() => setDetailsOpen(!detailsOpen)}><PanelRightClose size={19}/></button>
           <button className="icon-button" title="Settings" aria-label="Settings" onClick={() => setSettingsOpen(true)}><Settings2 size={19}/></button>
         </div>
