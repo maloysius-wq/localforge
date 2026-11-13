@@ -27,6 +27,7 @@ describe("retained coding context", () => {
     const r = prepareGeneration("Change the buttons",history,null);
     expect(r.messages[0].content).toContain("Build a Python calculator");
     expect(r.messages[0].content).not.toContain("ORIGINAL GOAL:\nBuild a single-file HTML Minesweeper game");
+    expect(r.messages[0].content).not.toContain("let mines = 10");
   });
   it("keeps subsequent user design choices and latest version of code", () => {
     const newAnswer = {role:"assistant",content:ticks + "html\n" + game.replace("mines = 10","mines = 20") + "\n" + ticks};
