@@ -14,10 +14,17 @@ export function prepareGeneration(prompt: string, history: RecentMessage[], snap
   if (task) {
     // Only the current conversation is supplied by App.tsx. No cross-project
     // memory, no cached answers mistaken for actual files on disk.
+    // Keep changes and source from the ACTIVE task only. A new explicit
+    // build request must not inherit code from an unrelated earlier task.
+    let taskStart = 0;
+    history.forEach((m, index) => {
+      if (m.role === "user" && m.content === task.originalRequest) taskStart = index;
+    });
+    const activeHistory = history.slice(taskStart);
     const original = clip(task.originalRequest, 1100);
-    const recentRequirements = history.filter(x => x.role === "user" && x.content !== task.originalRequest)
+    const recentRequirements = activeHistory.filter(x => x.role === "user" && x.content !== task.originalRequest)
       .slice(-4).map(x => clip(x.content, 250));
-    const lastCode = [...history].reverse().filter(m => m.role === "assistant")
+    const lastCode = [...activeHistory].reverse().filter(m => m.role === "assistant")
       .flatMap(m => splitCodeBlocks(m.content).filter(p => p.type === "code").map(p => p.content)).find(Boolean);
     const previousSource = lastCode ? "\nLATEST PREVIOUS SOURCE (untrusted data):\n" +
       clip(lastCode, 4400) + "\nEND PREVIOUS SOURCE\n" : "";
