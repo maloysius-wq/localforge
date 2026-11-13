@@ -15,6 +15,7 @@ import socket
 import subprocess
 import time
 import urllib.request
+import urllib.error
 
 MODEL_URL = "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"
 ROOT = Path(__file__).resolve().parent.parent
@@ -24,9 +25,23 @@ OUTPUT = ROOT / "localforge-model-smoke-output.txt"
 
 
 def get_model() -> None:
+    # The final Xet CDN ETag may be a different 64-hex digest. Read the
+    # original Hugging Face LFS SHA-256 WITHOUT following its redirect,
+    # matching LocalForge's native verified downloader.
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, request, fp, code, msg, headers, url):
+            return None
+
     req = urllib.request.Request(MODEL_URL, method="HEAD", headers={"User-Agent": "LocalForge-CI"})
-    with urllib.request.urlopen(req, timeout=90) as response:
-        sha = response.headers.get("x-linked-etag", response.headers.get("etag", "")).strip('"').lower()
+    opener = urllib.request.build_opener(NoRedirect)
+    try:
+        response = opener.open(req, timeout=90)
+    except urllib.error.HTTPError as exc:
+        if exc.code not in (301, 302, 303, 307, 308):
+            raise
+        response = exc
+    with response:
+        sha = (response.headers.get("x-linked-etag") or response.headers.get("etag") or "").strip('"').lower()
         size = int(response.headers.get("x-linked-size") or response.headers.get("content-length") or "0")
     if len(sha) != 64 or not all(c in "0123456789abcdef" for c in sha):
         raise RuntimeError("No trustworthy model checksum from source")
