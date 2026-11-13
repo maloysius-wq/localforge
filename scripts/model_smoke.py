@@ -39,7 +39,10 @@ def get_model() -> None:
         while chunk := response.read(2 * 1024 * 1024):
             digest.update(chunk)
             dest.write(chunk)
-    if MODEL.stat().st_size != size or digest.hexdigest() != sha:
+    actual_size = MODEL.stat().st_size
+    actual_sha = digest.hexdigest()
+    print("Model transfer diagnostics: expected bytes", size, "actual", actual_size, "sha matched", actual_sha == sha, "magic", MODEL.open("rb").read(4), flush=True)
+    if actual_size != size or actual_sha != sha:
         raise RuntimeError("Downloaded model failed size or SHA-256 verification")
     print("Verified model SHA-256", flush=True)
 
