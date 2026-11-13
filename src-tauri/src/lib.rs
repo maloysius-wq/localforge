@@ -473,14 +473,16 @@ mod prompt_tests {
             ChatMessage { role: "user".into(), content: "Create a fresh app".into() },
         ];
         let conversation = build_conversation(messages, None).unwrap();
-        assert_eq!(conversation.len(), 2);
-        assert_eq!(conversation[1]["content"], "Create a fresh app");
+        assert_eq!(conversation.len(), 4);
+        assert_eq!(conversation.last().unwrap()["content"], "Create a fresh app");
+        assert_eq!(conversation[1]["content"].as_str().unwrap().len(), 4200);
+        assert_eq!(conversation[2]["content"].as_str().unwrap().len(), 4200);
     }
 
     #[test]
     fn refuses_non_user_last_turn_and_oversize_prompts() {
         assert!(build_conversation(vec![ChatMessage { role:"assistant".into(), content:"hi".into() }], None).is_err());
-        assert!(build_conversation(vec![ChatMessage { role:"user".into(), content:"x".repeat(4900) }], None).is_err());
+        assert!(build_conversation(vec![ChatMessage { role:"user".into(), content:"x".repeat(9500) }], None).is_err());
     }
 }
 
