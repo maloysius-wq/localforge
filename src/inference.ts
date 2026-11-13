@@ -13,7 +13,7 @@ export const native = isTauri;
 export const getStatus = () => invoke<EngineStatus>("engine_status");
 export const getModelInfo = () => invoke<ModelInfo>("model_info");
 export const downloadModel = () => invoke<ModelInfo>("download_model");
-export const startModel = (modelPath: string | null, threads: number) => invoke<EngineStatus>("start_model", { modelPath, threads });
+export const startModel = (modelPath: string | null, threads: number, contextTokens: number) => invoke<EngineStatus>("start_model", { modelPath, threads, contextTokens });
 export const stopModel = () => invoke<EngineStatus>("stop_model");
 export const generate = (requestId: string, messages: GenerationMessage[], projectContext: string | null = null, codeOnly = false) => invoke<string>("generate", { requestId, messages, projectContext, codeOnly });
 export const cancelGeneration = () => invoke<void>("cancel_generation");

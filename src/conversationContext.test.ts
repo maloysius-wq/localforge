@@ -51,6 +51,16 @@ describe("retained coding context", () => {
     const result = prepareGeneration("Build a Python calculator",[],null);
     expect(result.messages[0].content).not.toContain("Minesweeper");
   });
+  it("64K retains a larger previous implementation", () => {
+    const code = "<!DOCTYPE html><html><body><script>" +
+      "let cells = [];\n".repeat(2500) + "</script></body></html>";
+    const previous = {role:"assistant",content:ticks+"html\n"+code+"\n"+ticks};
+    const small = prepareGeneration("Add flags",[initial,previous],null,6144);
+    const large = prepareGeneration("Add flags",[initial,previous],null,65536);
+    expect(small.messages[0].content).toContain("Excerpt shortened");
+    expect(large.messages[0].content.length).toBeGreaterThan(small.messages[0].content.length*4);
+    expect(large.messages[0].content).toContain("</html>");
+  });
   it("caps large source to the available CPU context budget", () => {
     const huge={role:"assistant",content:ticks+"html\n"+"<html>"+("a".repeat(20000))+"</html>\n"+ticks};
     const r=prepareGeneration("Improve the game",[initial,huge],"some project");

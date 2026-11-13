@@ -147,5 +147,45 @@ def main() -> None:
         log.close()
 
 
+def smoke_64k_startup() -> None:
+    """Verify that the pinned CPU-only llama.cpp runtime starts with 64K + YaRN."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    log_path = ROOT / "smoke-64k-server.log"
+    print("Starting experimental 65536-token CPU context", flush=True)
+    with log_path.open("w") as logfile:
+        process = subprocess.Popen([
+            str(RUNTIME), "--model", str(MODEL), "--host", "127.0.0.1",
+            "--port", str(port), "--ctx-size", "65536", "--threads", "4",
+            "--n-gpu-layers", "0", "--parallel", "1",
+            "--rope-scaling", "yarn", "--rope-scale", "2",
+            "--yarn-orig-ctx", "32768",
+        ], cwd=RUNTIME.parent, stdout=logfile, stderr=logfile)
+        try:
+            for _ in range(240):
+                if process.poll() is not None:
+                    raise RuntimeError("64K CPU runtime exited: " + log_path.read_text()[-3500:])
+                try:
+                    health = request_json("http://127.0.0.1:" + str(port) + "/health", timeout=2)
+                    if health.get("status") == "ok":
+                        print("Experimental 64K CPU model started successfully", flush=True)
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.5)
+            else:
+                raise RuntimeError("64K model failed to report ready")
+            # Startup validation is not a proof of 64K output quality.
+        finally:
+            process.terminate()
+            try:
+                process.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+
+
 if __name__ == "__main__":
     main()
+    smoke_64k_startup()
