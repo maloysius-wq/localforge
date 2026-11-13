@@ -3,5 +3,5 @@
   "identifier": "main-capability",
   "description": "Native folder picker and restricted Rust project commands. Individual file edits require an explicit UI preview and approval; no arbitrary shell execution.",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open"]
+  "permissions": ["core:default", "core:window:allow-is-fullscreen", "core:window:allow-set-fullscreen", "dialog:allow-open"]
 }

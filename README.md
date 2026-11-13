@@ -94,3 +94,8 @@ On Windows, the in-app updater now waits until LocalForge's owned llama-server p
 - Creation requests are routed to a dedicated code-first prompt and a larger model output budget; normal conversational answers are unchanged.
 - LocalForge checks for actual source code, retries once if the model only describes a program, and clearly reports failure if no complete implementation appears. These are checks on *output format*, not proof that the generated code functions correctly.
 - Saved projects and model downloads are preserved. Longer output may take more time and RAM on older CPUs. No code is written without explicit approval.
+
+## v0.3.4 user interface, startup and context
+- Chat shows user messages aligned right and model responses on the left. The app launches fullscreen, with F11 or the header button to exit fullscreen.
+- If a GGUF is already downloaded or selected, the CPU model loads automatically at startup. User preference, selected model path and thread count are persisted locally; automatic loading can be disabled to save RAM. It never downloads an unrequested model.
+- Follow-up software changes now include the original task, recent requirements, and a bounded excerpt of the latest generated source. Ordinary discussions retain recent message history. This is bounded prompt context, not permanent neural memory; large programs can still exceed the model's context limit.
