@@ -17,6 +17,27 @@ const MODEL_URL: &str = "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct
 const MIN_MODEL_BYTES: u64 = 500_000_000;
 const MAX_MODEL_BYTES: u64 = 2_000_000_000;
 
+// Deliberately optimized for producing useful first implementations from vague requests.
+// Project-folder paths are not sent to the model and no filesystem tools exist yet.
+const CODING_SYSTEM_PROMPT: &str = concat!(
+    "You are LocalForge, a practical offline coding implementation engine, not a general chatbot. ",
+    "Your goal is to DELIVER working source code, not merely offer to help. ",
+    "When asked to create, build, write or generate an app, program or feature from scratch, ",
+    "assume there is NO existing code or project structure. Choose sensible defaults and begin implementing immediately. ",
+    "Never ask the user to supply project structure, starter code or files for a NEW project. ",
+    "For Python graphical apps, prefer standard-library tkinter unless another framework is specified. ",
+    "Provide a concise file list and COMPLETE code in fenced code blocks with language tags; include basic run instructions. ",
+    "For a large request, deliver the smallest useful runnable version now and briefly explain its scope. ",
+    "Avoid generic promises and unnecessary follow-up questions; only ask if a genuinely essential requirement is missing. ",
+    "For changes to an EXISTING project, you may request the relevant source if necessary. ",
+    "You have NO project-file access, editing tools, compiler or terminal: never claim to have inspected, written, ",
+    "executed, tested, built or installed anything. Code is provided in chat only. ",
+    "Write accurate Python, HTML, CSS, JavaScript and TypeScript code, with minimal dependencies and clear filenames."
+);
+const MODEL_CONTEXT_TOKENS: u32 = 4096;
+const MAX_GENERATION_TOKENS: u32 = 1536;
+
+
 #[derive(Default)]
 struct Engine {
     inner: Mutex<Inner>,
@@ -196,7 +217,7 @@ async fn start_model(app: AppHandle, engine: State<'_, Engine>, model_path: Opti
         if inner.process.is_some() { return Err("Unload the current model first".into()); }
         let child = Command::new(executable).current_dir(runtime)
             .arg("--model").arg(&path).arg("--host").arg("127.0.0.1")
-            .arg("--port").arg(port.to_string()).arg("--ctx-size").arg("2048")
+            .arg("--port").arg(port.to_string()).arg("--ctx-size").arg(MODEL_CONTEXT_TOKENS.to_string())
             .arg("--threads").arg(threads.to_string()).arg("--n-gpu-layers").arg("0")
             .arg("--parallel").arg("1").arg("--api-key").arg(&key)
             .stdout(Stdio::from(log.try_clone().map_err(|e| e.to_string())?))
@@ -250,15 +271,10 @@ async fn generate(app: AppHandle, engine: State<'_, Engine>, request_id: String,
         (port, key, cancel)
     };
     let _guard = GenerationGuard(&engine);
-    let mut conversation = vec![serde_json::json!({"role":"system", "content":"You are LocalForge, a concise offline coding specialist. Focus on Python, HTML, CSS and JavaScript. Be technically precise, ask for necessary details only, disclose uncertainty, and never claim to have read files, run tools or tested code unless you have actually done so."})];
-    for msg in messages {
-        if msg.content.chars().count() > 9000 { return Err("Message is too long for the small local model".into()); }
-        if msg.role != "user" && msg.role != "assistant" { return Err("Invalid conversation role".into()); }
-        conversation.push(serde_json::json!({"role": msg.role, "content": msg.content}));
-    }
+    let conversation = build_conversation(messages)?;
     let client = reqwest::Client::builder().timeout(Duration::from_secs(300)).build().map_err(|e| e.to_string())?;
     let response = client.post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
-        .bearer_auth(&key).json(&serde_json::json!({"messages":conversation,"stream":true,"max_tokens":512,"temperature":0.2}))
+        .bearer_auth(&key).json(&serde_json::json!({"messages":conversation,"stream":true,"max_tokens":MAX_GENERATION_TOKENS,"temperature":0.15}))
         .send().await.map_err(|e| format!("Model communication failed: {e}"))?;
     if !response.status().is_success() { return Err(format!("Model returned HTTP {}", response.status())); }
     let mut stream = response.bytes_stream();
@@ -284,6 +300,82 @@ async fn generate(app: AppHandle, engine: State<'_, Engine>, request_id: String,
         }
     }
     Ok(output)
+}
+
+
+// Keep enough context available for full code generation. The latest user prompt
+// always has priority; older turns are included newest-first until the budget is full.
+fn build_conversation(messages: Vec<ChatMessage>) -> Result<Vec<serde_json::Value>, String> {
+    if messages.is_empty() || messages.len() > 16 { return Err("Invalid conversation length".into()); }
+    if messages.last().is_none_or(|m| m.role != "user") {
+        return Err("The latest message must be from the user".into());
+    }
+    const MAX_LATEST_CHARS: usize = 4800;
+    const MAX_HISTORY_CHARS: usize = 4000;
+    let mut history = Vec::new();
+    let mut remaining = MAX_HISTORY_CHARS;
+    for (index, msg) in messages.into_iter().rev().enumerate() {
+        if msg.content.chars().count() > 9000 { return Err("Message is too long for the small local model".into()); }
+        if msg.role != "user" && msg.role != "assistant" { return Err("Invalid conversation role".into()); }
+        let chars = msg.content.chars().count();
+        if index == 0 {
+            if chars > MAX_LATEST_CHARS {
+                return Err("This prompt is too long for the selected small model; shorten it and retry".into());
+            }
+        } else if chars > remaining {
+            break;
+        } else {
+            remaining -= chars;
+        }
+        history.push(serde_json::json!({"role":msg.role,"content":msg.content}));
+    }
+    history.reverse();
+    let mut conversation = Vec::with_capacity(history.len() + 1);
+    conversation.push(serde_json::json!({"role":"system","content":CODING_SYSTEM_PROMPT}));
+    conversation.extend(history);
+    Ok(conversation)
+}
+
+#[cfg(test)]
+mod prompt_tests {
+    use super::*;
+
+    #[test]
+    fn new_project_policy_requests_real_code_instead_of_starter_files() {
+        assert!(CODING_SYSTEM_PROMPT.contains("DELIVER working source code"));
+        assert!(CODING_SYSTEM_PROMPT.contains("Never ask the user to supply project structure"));
+        assert!(CODING_SYSTEM_PROMPT.contains("fenced code blocks"));
+        assert!(CODING_SYSTEM_PROMPT.contains("NO project-file access"));
+        assert!(MAX_GENERATION_TOKENS >= 1024);
+        assert!(MODEL_CONTEXT_TOKENS > MAX_GENERATION_TOKENS);
+    }
+
+    #[test]
+    fn project_creation_request_reaches_the_model_without_needing_existing_files() {
+        let messages = vec![ChatMessage { role: "user".into(), content: "Build a Python GUI for my game library".into() }];
+        let conversation = build_conversation(messages).unwrap();
+        assert_eq!(conversation.len(), 2);
+        assert_eq!(conversation[0]["role"], "system");
+        assert_eq!(conversation[1]["content"], "Build a Python GUI for my game library");
+    }
+
+    #[test]
+    fn recent_history_does_not_starve_the_latest_prompt() {
+        let messages = vec![
+            ChatMessage { role: "user".into(), content: "A".repeat(4200) },
+            ChatMessage { role: "assistant".into(), content: "B".repeat(4200) },
+            ChatMessage { role: "user".into(), content: "Create a fresh app".into() },
+        ];
+        let conversation = build_conversation(messages).unwrap();
+        assert_eq!(conversation.len(), 2);
+        assert_eq!(conversation[1]["content"], "Create a fresh app");
+    }
+
+    #[test]
+    fn refuses_non_user_last_turn_and_oversize_prompts() {
+        assert!(build_conversation(vec![ChatMessage { role:"assistant".into(), content:"hi".into() }]).is_err());
+        assert!(build_conversation(vec![ChatMessage { role:"user".into(), content:"x".repeat(4900) }]).is_err());
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

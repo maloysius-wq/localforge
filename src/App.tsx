@@ -14,6 +14,7 @@ import {
   type ChatMessage, type EventLog, type Project, type Thread, type WorkspaceState,
 } from "./storage";
 import { ModelManager } from "./ModelManager";
+import { splitCodeBlocks } from "./codeBlocks";
 import {
   type DownloadProgress, type EngineStatus, type ModelInfo, emptyStatus, emptyModel,
   getStatus, getModelInfo, downloadModel, startModel, stopModel,
@@ -23,13 +24,29 @@ import {
 type Tab = "activity" | "project";
 const SUGGESTIONS = [
   { icon: FileCode2, title: "Debug an issue", prompt: "Inspect my project and help me debug a specific issue." },
-  { icon: Sparkles, title: "Build a feature", prompt: "Help me plan and implement a new feature in this project." },
+  { icon: Sparkles, title: "Build a program", prompt: "Build a complete, runnable Python desktop app from scratch with a graphical interface for managing my game collection. Include filenames and code." },
   { icon: BookOpen, title: "Understand code", prompt: "Explain the architecture of this project and its main components." },
   { icon: Code2, title: "Improve quality", prompt: "Review this project for bugs, code quality, and maintainability improvements." },
 ];
 const timeLabel = (timestamp: number) => new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(timestamp);
 const dateLabel = (timestamp: number) => new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(timestamp);
 const shortTitle = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, 52) || "New conversation";
+
+function MessageBody({ content, isAssistant }: { content: string; isAssistant: boolean }) {
+  const [copied, setCopied] = useState<number | null>(null);
+  if (!isAssistant) return <div className="message-text">{content}</div>;
+  return <div className="message-body">{splitCodeBlocks(content).map((part, index) => part.type === "text"
+    ? <div key={index} className="message-text">{part.content}</div>
+    : <div key={index} className="code-block">
+        <div className="code-heading"><span>{part.language || "code"}</span><button type="button" onClick={() => {
+          void navigator.clipboard.writeText(part.content).then(() => {
+            setCopied(index);
+            window.setTimeout(() => setCopied(value => value === index ? null : value), 1600);
+          }).catch(() => setCopied(null));
+        }}>{copied === index ? "Copied" : "Copy code"}</button></div>
+        <pre><code>{part.content}</code></pre>
+      </div>)}</div>;
+}
 
 function ActivityItem({ event }: { event: EventLog }) {
   return <div className="activity-item"><span className="activity-dot" />
@@ -90,7 +107,7 @@ function SettingsModal({ theme, setTheme, onClose, engine, model, progress, down
       <div className="settings-section"><h3>Privacy and safety</h3>
         <div className="setting-summary"><ShieldCheck size={18}/><div><strong>Your data stays on this computer</strong><span>Conversations and project references stay on this computer. Model download reaches Hugging Face only when you request it. Chat inference runs on localhost. No code execution or project file access.</span></div></div>
       </div>
-      <div className="settings-footer">LocalForge 0.2.0 · CPU coding chat</div>
+      <div className="settings-footer">LocalForge 0.2.1 · CPU coding chat</div>
     </section>
   </div>;
 }
@@ -295,7 +312,7 @@ export default function App() {
         </div>)}
       </div>
       <div className="sidebar-footer">
-        <div className="sidebar-status"><span className="status-indicator"/><div><strong>{engine.running ? "CPU model ready" : "Model not loaded"}</strong><span>Offline coding · v0.2</span></div></div>
+        <div className="sidebar-status"><span className="status-indicator"/><div><strong>{engine.running ? "CPU model ready" : "Model not loaded"}</strong><span>Offline coding · v0.2.1</span></div></div>
         <button className="sidebar-settings" onClick={() => setSettingsOpen(true)}><Settings2 size={18}/> Settings <span>⌘,</span></button>
       </div>
     </aside>
@@ -319,14 +336,14 @@ export default function App() {
           <div className="conversation-intro"><div className="conversation-kicker"><MessageSquare size={15}/> CONVERSATION</div><h1>{activeThread.title}</h1><p>Started {dateLabel(activeThread.createdAt)} · Saved only on this device</p></div>
           {activeThread.messages.map(message => <article key={message.id} className={`chat-message ${message.role}`}>
             <div className="message-avatar">{message.role === "user" ? "Y" : <Code2 size={16}/>}</div>
-            <div className="message-content"><div className="message-header"><strong>{message.role === "user" ? "You" : "LocalForge"}</strong><time>{timeLabel(message.createdAt)}</time></div><div className="message-text">{message.content}</div></div>
+            <div className="message-content"><div className="message-header"><strong>{message.role === "user" ? "You" : "LocalForge"}</strong><time>{timeLabel(message.createdAt)}</time></div><MessageBody content={message.content} isAssistant={message.role === "assistant"} /></div>
           </article>)}
-          {generating && pendingRef.current?.threadId === activeThread.id && <article className="chat-message assistant" aria-live="polite"><div className="message-avatar"><Code2 size={16}/></div><div className="message-content"><div className="message-header"><strong>LocalForge · generating</strong></div><div className="message-text">{liveText || "Thinking on your CPU…"}</div></div></article>}
+          {generating && pendingRef.current?.threadId === activeThread.id && <article className="chat-message assistant" aria-live="polite"><div className="message-avatar"><Code2 size={16}/></div><div className="message-content"><div className="message-header"><strong>LocalForge · generating</strong></div><MessageBody content={liveText || "Thinking on your CPU…"} isAssistant /></div></article>}
           {!engine.running && activeThread.messages.at(-1)?.role === "user" && <div className="offline-response"><Info size={17}/><div><strong>Prompt saved. No response generated.</strong><p>Open Settings, download a GGUF model and load it to enable real offline chat.</p></div></div>}
         </div> : <EmptyChat project={activeProject} onPrompt={prompt => { setDraft(prompt); textareaRef.current?.focus(); }}/>}</div>
       <div className="composer-area"><form onSubmit={onSubmit} className="composer">
         <textarea ref={textareaRef} rows={2} value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={onComposerKeyDown} placeholder="Describe what you'd like to build…" aria-label="Message" />
-        <div className="composer-bottom"><div className="composer-meta"><span><Code2 size={14}/> Coding workspace</span><span className="composer-separator">·</span><span>Local only</span></div>
+        <div className="composer-bottom"><div className="composer-meta"><span><Code2 size={14}/> Coding workspace</span><span className="composer-separator">·</span><span>Local code chat · does not write files</span></div>
           {generating ? <button type="button" className="send-button stop-button" onClick={() => void cancelGeneration()} title="Stop generation" aria-label="Stop generation"><StopCircle size={19}/></button> : <button type="submit" className="send-button" disabled={!draft.trim()} title={engine.running ? "Send prompt" : "Save prompt"} aria-label={engine.running ? "Send prompt" : "Save prompt"}><ArrowUp size={19}/></button>}
         </div>
       </form><div className="composer-caption">{engine.running ? "Enter to send · Shift+Enter for a new line · CPU only" : "Enter to save · Shift+Enter for a new line · Load a model in Settings"}</div></div>
@@ -339,7 +356,7 @@ export default function App() {
           <div className="detail-section"><div className="detail-section-heading"><Activity size={17}/><h3>Session activity</h3></div><p className="detail-description">A transparent record of workspace actions. No simulated AI progress.</p></div>
           <div className="activity-list">{workspace.activity.length ? workspace.activity.map(e => <ActivityItem key={e.id} event={e}/>) : <div className="detail-empty"><History size={24}/><p>No activity yet</p><span>Actions you take will appear here.</span></div>}</div>
           <div className="detail-divider"/>
-          <div className="detail-section"><div className="detail-section-heading"><Terminal size={17}/><h3>Build & tests</h3></div><div className="pending-card"><div className="pending-label">NOT AVAILABLE IN V0.1</div><p>The model can chat about code, but it cannot run tools, inspect files or report verified test outcomes yet.</p></div></div>
+          <div className="detail-section"><div className="detail-section-heading"><Terminal size={17}/><h3>Build & tests</h3></div><div className="pending-card"><div className="pending-label">NOT AVAILABLE IN V0.1</div><p>The model can generate code in chat, but it cannot write project files, inspect them or run tests yet.</p></div></div>
         </> : <>
           <div className="detail-section"><div className="detail-section-heading"><FolderOpen size={18}/><h3>Project overview</h3></div>
             {activeProject ? <><div className="project-facts"><span>Name</span><strong>{activeProject.name}</strong><span>Path</span><code title={activeProject.path}>{activeProject.path}</code><span>Added</span><strong>{dateLabel(activeProject.addedAt)}</strong><span>Conversations</span><strong>{workspace.threads.filter(t => t.projectId === activeProject.id).length}</strong></div>
