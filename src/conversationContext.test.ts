@@ -16,6 +16,18 @@ describe("retained coding context", () => {
     expect(result.messages[0].content).toContain("Add right-click flags");
     expect(result.projectContext).toContain("New Text Document.txt");
   });
+  it("handles polite follow-ups in the same project", () => {
+    const r = prepareGeneration("Can you add a flag counter?",[initial,answer],null);
+    expect(r.task).not.toBeNull();
+    expect(r.messages[0].content).toContain("let mines = 10");
+    expect(r.messages[0].content).toContain("flag counter");
+  });
+  it("handles a new explicit build as a new task anchor", () => {
+    const history = [initial,answer,{role:"user",content:"Build a Python calculator"}];
+    const r = prepareGeneration("Change the buttons",history,null);
+    expect(r.messages[0].content).toContain("Build a Python calculator");
+    expect(r.messages[0].content).not.toContain("ORIGINAL GOAL:\nBuild a single-file HTML Minesweeper game");
+  });
   it("keeps subsequent user design choices and latest version of code", () => {
     const newAnswer = {role:"assistant",content:ticks + "html\n" + game.replace("mines = 10","mines = 20") + "\n" + ticks};
     const result = prepareGeneration("Make the colors purple",
