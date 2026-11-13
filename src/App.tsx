@@ -15,6 +15,7 @@ import {
 } from "./storage";
 import { ModelManager } from "./ModelManager";
 import { splitCodeBlocks } from "./codeBlocks";
+import { codeTaskFor, containsImplementation, retryForActualCode } from "./codeTasks";
 import { inspectProject, readProjectFile, applyProjectChange, undoProjectChange, suggestFilename,
   type ProjectSnapshot, type ProjectFile } from "./projectTools";
 import { checkForUpdates, installUpdate, onUpdateProgress, type UpdateInfo } from "./updates";
@@ -155,7 +156,7 @@ function SettingsModal({ theme, setTheme, onClose, engine, model, progress, down
       <div className="settings-section"><h3>Privacy and safety</h3>
         <div className="setting-summary"><ShieldCheck size={18}/><div><strong>Your data stays on this computer</strong><span>Chats stay local. Your selected project can be inspected on request and edited only after approving each proposed file change. No shell execution. Update checks reach the official GitHub API on request.</span></div></div>
       </div>
-      <div className="settings-footer">LocalForge 0.3.2 · CPU coding workspace</div>
+      <div className="settings-footer">LocalForge 0.3.3 · CPU coding workspace</div>
     </section>
   </div>;
 }
@@ -387,14 +388,30 @@ export default function App() {
     setLiveText("");
     setGenerating(true);
     const projectContext = activeProject && inspected?.projectId === activeProject.id ? inspected.data.context : null;
-    void generate(requestId, [...context, { role: "user", content }], projectContext).then(reply => {
-      if (reply.trim()) {
-        const answer: ChatMessage = { id: newId(), role: "assistant", content: reply, createdAt: Date.now() };
-        setWorkspace(s => record({ ...s, threads: s.threads.map(t => t.id === threadId
-          ? { ...t, messages: [...t.messages, answer], updatedAt: Date.now() } : t) }, "Local model response received"));
-      } else setNotice("The local model returned no text. Try again or unload and reload it.");
-    }).catch(error => { setNotice(`Generation failed: ${String(error)}`); })
-      .finally(() => { pendingRef.current = null; setLiveText(""); setGenerating(false); });
+    const task = codeTaskFor(content, current?.messages ?? []);
+    void (async () => {
+      try {
+        const codeMessages = task ? [{ role: "user" as const, content: task.request }] : [...context, { role: "user" as const, content }];
+        let reply = await generate(requestId, codeMessages, projectContext, !!task);
+        if (task && !containsImplementation(reply, task.target)) {
+          setNotice("Local model returned no source code. Retrying once with a code-first request…");
+          setLiveText("");
+          reply = await generate(requestId, [{ role: "user", content: retryForActualCode(task) }], projectContext, true);
+        }
+        if (reply.trim()) {
+          const validated = !task || containsImplementation(reply, task.target);
+          const finalText = validated ? reply
+            : "⚠ LocalForge could not obtain a complete code implementation from this model after two attempts. The text below is not a finished program.\n\n" + reply;
+          const answer: ChatMessage = { id: newId(), role: "assistant", content: finalText, createdAt: Date.now() };
+          setWorkspace(state => record({ ...state, threads: state.threads.map(t => t.id === threadId
+            ? { ...t, messages: [...t.messages, answer], updatedAt: Date.now() } : t) },
+            validated ? "Local model response received" : "Local model returned no complete implementation"));
+          if (!validated) setNotice("Model did not produce usable code after two attempts. Try a smaller task or a stronger GGUF model.");
+          else setNotice("");
+        } else setNotice("The local model returned no text. Try again or unload and reload it.");
+      } catch (error) { setNotice("Generation failed: " + String(error)); }
+      finally { pendingRef.current = null; setLiveText(""); setGenerating(false); }
+    })();
   }
   function onSubmit(e: FormEvent) { e.preventDefault(); submitPrompt(draft); }
   function onComposerKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -421,7 +438,7 @@ export default function App() {
         </div>)}
       </div>
       <div className="sidebar-footer">
-        <div className="sidebar-status"><span className="status-indicator"/><div><strong>{engine.running ? "CPU model ready" : "Model not loaded"}</strong><span>Offline coding · v0.3.2</span></div></div>
+        <div className="sidebar-status"><span className="status-indicator"/><div><strong>{engine.running ? "CPU model ready" : "Model not loaded"}</strong><span>Offline coding · v0.3.3</span></div></div>
         <button className="sidebar-settings" onClick={() => setSettingsOpen(true)}><Settings2 size={18}/> Settings <span>⌘,</span></button>
       </div>
     </aside>
@@ -484,7 +501,7 @@ export default function App() {
             </> : <div className="detail-empty"><Folder size={24}/><p>No project selected</p><span>Add a project folder to associate conversations with real work.</span><button onClick={addProject}>Choose folder <ArrowRight size={14}/></button></div>}</div>
         </>}
       </div>
-      <div className="detail-footer"><div><span className="footer-small-dot"/> Local-first workspace</div><span>0.3.2</span></div>
+      <div className="detail-footer"><div><span className="footer-small-dot"/> Local-first workspace</div><span>0.3.3</span></div>
     </aside>}
     {(notice || storageWarning) && <div className="toast" role="alert"><Info size={17}/><span>{storageWarning ? "Local storage is unavailable or full. Changes may not survive restarting the app." : notice}</span><button aria-label="Dismiss notification" onClick={() => { setNotice(""); setStorageWarning(false); }}><X size={16}/></button></div>}
     {proposal && <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setProposal(null);}}>

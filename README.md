@@ -89,3 +89,8 @@ Source excerpts are read only after you explicitly inspect the selected folder. 
 
 ## v0.3.2 updater DLL-in-use fix
 On Windows, the in-app updater now waits until LocalForge's owned llama-server process exits before launching the verified NSIS installer. This prevents its loaded ggml-base.dll from blocking upgrades. If an older version is already stuck during installation, cancel the installer and end only LocalForge and its owned llama-server processes in Task Manager, or reboot, before installing. Do not select Ignore in the DLL-writing error, and do not delete downloaded models or conversation data.
+
+## v0.3.3 coding-output reliability
+- Creation requests are routed to a dedicated code-first prompt and a larger model output budget; normal conversational answers are unchanged.
+- LocalForge checks for actual source code, retries once if the model only describes a program, and clearly reports failure if no complete implementation appears. These are checks on *output format*, not proof that the generated code functions correctly.
+- Saved projects and model downloads are preserved. Longer output may take more time and RAM on older CPUs. No code is written without explicit approval.
