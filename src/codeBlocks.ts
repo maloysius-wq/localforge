@@ -5,6 +5,11 @@ export type MessageSegment =
 // Present code without interpreting model-supplied HTML or running scripts.
 // A language tag is optional; unclosed fences remain ordinary text.
 export function splitCodeBlocks(input: string): MessageSegment[] {
+  // Small local models sometimes emit a full HTML file without Markdown fences.
+  // Render it as copyable/proposable source rather than unformatted prose.
+  if (/^\s*(?:<!doctype\s+html|<html\b)/i.test(input) && /<\/html\s*>\s*$/i.test(input)) {
+    return [{ type: "code", language: "html", content: input.trim() }];
+  }
   const parts: MessageSegment[] = [];
   const fence = /(?:^|\n)```([^\r\n`]*)\r?\n([\s\S]*?)\r?\n```(?=\n|$)/g;
   let cursor = 0;
