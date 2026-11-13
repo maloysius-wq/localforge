@@ -15,7 +15,7 @@
   },
   "bundle": {
     "active": true,
-    "resources": ["runtime/**"],
+    "resources": ["runtime/*"],
     "targets": "all",
     "icon": ["icons/icon.png", "icons/icon.ico"],
     "shortDescription": "Offline-first coding workspace",
