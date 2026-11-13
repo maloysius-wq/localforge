@@ -1,7 +1,7 @@
 import { Cpu, Download, FolderOpen, HardDrive, LoaderCircle, Play, Square } from "lucide-react";
 import type { DownloadProgress, EngineStatus, ModelInfo } from "./inference";
 
-export function ModelManager({ engine, model, progress, downloading, busy, modelPath, threads, setThreads, onDownload, onLoad, onUnload, onChoose }: {
+export function ModelManager({ engine, model, progress, downloading, busy, modelPath, threads, setThreads, autoLoad, setAutoLoad, onDownload, onLoad, onUnload, onChoose }: {
   engine: EngineStatus;
   model: ModelInfo;
   progress: DownloadProgress | null;
@@ -10,6 +10,8 @@ export function ModelManager({ engine, model, progress, downloading, busy, model
   modelPath: string | null;
   threads: number;
   setThreads: (threads: number) => void;
+  autoLoad: boolean;
+  setAutoLoad: (value: boolean) => void;
   onDownload: () => void;
   onLoad: () => void;
   onUnload: () => void;
@@ -34,6 +36,7 @@ export function ModelManager({ engine, model, progress, downloading, busy, model
     <div className="model-option"><label htmlFor="cpu-threads"><strong>CPU threads</strong></label><p>Lower values can keep older computers responsive. Start with 2 and adjust after testing.</p>
       <select id="cpu-threads" value={threads} onChange={e => setThreads(Number(e.target.value))} disabled={busy || engine.running}>{[1,2,3,4,6,8,12,16].map(n => <option key={n} value={n}>{n} {n===1?'thread':'threads'}</option>)}</select>
     </div>
+    <label className="model-autoload"><input type="checkbox" checked={autoLoad} onChange={e => setAutoLoad(e.target.checked)}/><span><strong>Load model when LocalForge opens</strong><small>Uses your CPU and RAM on startup. Turn this off on very low-memory computers.</small></span></label>
     <div className="model-action-row">
       {!engine.running ? <button type="button" className="model-action primary" onClick={onLoad} disabled={!selected || busy || downloading}>{busy ? <LoaderCircle size={15}/> : <Play size={15}/>} {busy ? "Loading model…" : "Load model"}</button>
         : <button type="button" className="model-action secondary" onClick={onUnload} disabled={busy || engine.generating}><Square size={15}/> Unload model</button>}
