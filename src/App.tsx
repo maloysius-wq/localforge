@@ -189,7 +189,7 @@ export default function App() {
   });
   const [autoLoad, setAutoLoad] = useState(() => localStorage.getItem("localforge.auto-load.v1") !== "false");
   const [fullscreen, setFullscreen] = useState(() => isTauri());
-  const startupRef = useRef(false);
+  const startupRef = useRef<Promise<[EngineStatus, ModelInfo]> | null>(null);
   const [generating, setGenerating] = useState(false);
   const [liveText, setLiveText] = useState("");
   const [inspected, setInspected] = useState<{ projectId: string; data: ProjectSnapshot } | null>(null);
@@ -237,11 +237,11 @@ export default function App() {
     if (!isTauri()) return;
     let disposed = false;
     const unsubscribe: Array<() => void> = [];
-    if (!startupRef.current) {
-      startupRef.current = true;
+    if (!startupRef.current) startupRef.current = Promise.all([getStatus(), getModelInfo()]);
+    {
       void (async () => {
         try {
-          const [status, info] = await Promise.all([getStatus(), getModelInfo()]);
+          const [status, info] = await startupRef.current!;
           if (disposed) return;
           setEngine(status); setModel(info);
           if (autoLoad && !status.running && (info.installed || modelPath)) {
