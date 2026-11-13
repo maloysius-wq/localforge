@@ -6,8 +6,11 @@ const creation = /\b(build|create|make|turn|convert|implement|generate|write|dev
 const artifact = /\b(game|app|application|program|html|css|javascript|typescript|python|script|website|page|file|feature|code|function|project|minesweeper|calculator)\b/i;
 const continuation = /^(?:(?:please|can you|could you|can we|would you|i want you to|i'd like you to|also)\s+)?(?:expand(?:\s+it)?|finish(?:\s+it)?|complete(?:\s+it)?|write\s+(?:the\s+)?code|code\s+it|do\s+it|actually\s+(?:write|build|code)|make\s+it\s+(?:work|complete)|implement\s+it|add\b|change\b|modify\b|fix\b|improve\b|update\b|remove\b|refactor\b|adjust\b|tweak\b|now\b|make\s+(?:it|the|this|that)\b|set\s+(?:it|the|this|that)\b)/i;
 
+const namedSourceFile = /\b[a-zA-Z0-9_.-]+\.(?:py|js|jsx|ts|tsx|html|css|json|rs|md|toml|txt)\b/i;
+const sourceEdit = /^(?:(?:please|can you|could you|can we|would you)\s+)?(?:fix|edit|modify|change|update|refactor|improve|add|remove|replace|correct)\b/i;
 function looksLikeBuildRequest(prompt: string): boolean {
-  return creation.test(prompt) && artifact.test(prompt);
+  return (creation.test(prompt) && artifact.test(prompt))
+    || (sourceEdit.test(prompt) && (namedSourceFile.test(prompt) || artifact.test(prompt)));
 }
 
 export function codeTaskFor(prompt: string, history: RecentMessage[]): CodeTask | null {
@@ -15,7 +18,7 @@ export function codeTaskFor(prompt: string, history: RecentMessage[]): CodeTask 
   const isNewBuild = looksLikeBuildRequest(full);
   const isFollowup = continuation.test(full);
   if (!isNewBuild && !isFollowup) return null;
-  const earlier = [...history].reverse().find(msg => msg.role === "user" && looksLikeBuildRequest(msg.content) && !continuation.test(msg.content));
+  const earlier = [...history].reverse().find(msg => msg.role === "user" && looksLikeBuildRequest(msg.content) && (!continuation.test(msg.content) || namedSourceFile.test(msg.content)));
   // Do not feed a previous model refusal back into the code-building prompt.
   const original = isFollowup && earlier ? earlier.content : full;
   if (!isNewBuild && !earlier) return null;
