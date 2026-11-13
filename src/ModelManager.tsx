@@ -37,8 +37,8 @@ export function ModelManager({ engine, model, progress, downloading, busy, model
     <div className="model-action-row">
       {!engine.running ? <button type="button" className="model-action primary" onClick={onLoad} disabled={!selected || busy || downloading}>{busy ? <LoaderCircle size={15}/> : <Play size={15}/>} {busy ? "Loading model…" : "Load model"}</button>
         : <button type="button" className="model-action secondary" onClick={onUnload} disabled={busy || engine.generating}><Square size={15}/> Unload model</button>}
-      <span className="engine-hint"><HardDrive size={14}/> 4,096-token context · GPU layers: 0</span>
+      <span className="engine-hint"><HardDrive size={14}/> 6,144-token context · GPU layers: 0</span>
     </div>
-    <p className="model-caution">The model runs locally on your CPU. It can generate code in chat, but cannot read or change project files, run tests or execute commands in this release. Available RAM and CPU instructions determine actual performance.</p>
+    <p className="model-caution">The model runs locally on your CPU. LocalForge can inspect selected project files and write a proposed single-file change only after your approval. No build or test execution yet. Code-first mode can use longer responses, increasing RAM use and generation time on older computers.</p>
   </div>;
 }

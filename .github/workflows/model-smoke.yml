@@ -1,0 +1,35 @@
+name: Smoke-test real CPU coding model
+
+on:
+  pull_request:
+    paths:
+      - 'src-tauri/src/lib.rs'
+      - 'src/codeTasks.ts'
+      - 'scripts/model_smoke.py'
+      - '.github/workflows/model-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  model-smoke:
+    name: Generate one-file HTML with CPU Qwen model
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare pinned and verified CPU-only runtime
+        run: python scripts/prepare_runtime.py
+      - name: Run real model inference and inspect response
+        run: python scripts/model_smoke.py
+      - name: Save inference report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: localforge-cpu-model-smoke
+          if-no-files-found: warn
+          path: |
+            localforge-model-smoke-output.txt
+            smoke-llama.log
+          retention-days: 5
