@@ -11,7 +11,7 @@ export const undoProjectChange = (root: string, token: string) => invoke<string>
 
 const supported = new Set(["py", "js", "jsx", "ts", "tsx", "html", "css", "json", "rs", "md", "toml", "yml", "yaml"]);
 export function suggestFilename(language: string, precedingText: string): string {
-  const match = Array.from(precedingText.matchAll(/(?:^|\n|\s)([\w./-]+\.(?:py|js|jsx|ts|tsx|html|css|json|rs|md|toml|yml|yaml))\b/gi)).at(-1);
+  const match = Array.from(precedingText.matchAll(/(?:^|\n|\s|`)([\w./-]+\.(?:py|js|jsx|ts|tsx|html|css|json|rs|md|toml|yml|yaml))\b/gi)).at(-1);
   if (match && !match[1].includes("..") && !match[1].startsWith("/")) return match[1];
   const ext = language.replace(/[^a-zA-Z]/g, "").toLowerCase();
   const normalized = ({ python: "py", javascript: "js", typescript: "ts", rust: "rs" } as Record<string, string>)[ext] || ext;
