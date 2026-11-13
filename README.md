@@ -99,3 +99,8 @@ On Windows, the in-app updater now waits until LocalForge's owned llama-server p
 - Chat shows user messages aligned right and model responses on the left. The app launches fullscreen, with F11 or the header button to exit fullscreen.
 - If a GGUF is already downloaded or selected, the CPU model loads automatically at startup. User preference, selected model path and thread count are persisted locally; automatic loading can be disabled to save RAM. It never downloads an unrequested model.
 - Follow-up software changes now include the original task, recent requirements, and a bounded excerpt of the latest generated source. Ordinary discussions retain recent message history. This is bounded prompt context, not permanent neural memory; large programs can still exceed the model's context limit.
+
+## v0.3.5 optional experimental 64K context
+Choose Settings → Local inference → Context window. Select 4,096, 6,144 (low-RAM default), 8,192, 16,384, 32,768 (Qwen native) or 65,536 (experimental) tokens. Selection persists and affects both manual and automatic model loading. Unload/reload before changing context.
+
+Qwen2.5-Coder-1.5B GGUF is natively 32K, so 64K uses experimental YaRN extrapolation. Accuracy beyond 32K is not assured; larger windows reserve more RAM and increase CPU prefill latency, especially problematic for 4GB PCs. Conversation history keeps more code at larger contexts but remains bounded and approximate rather than token-exact.
