@@ -29,6 +29,11 @@ describe("retained coding context", () => {
     expect(r.messages[0].content).not.toContain("ORIGINAL GOAL:\nBuild a single-file HTML Minesweeper game");
     expect(r.messages[0].content).not.toContain("let mines = 10");
   });
+  it("recognizes Make a new game as the original goal, not a followup", () => {
+    const original = {role:"user",content:"Make a new Minesweeper game in HTML"};
+    const r = prepareGeneration("Add flags", [original,answer], null);
+    expect(r.task?.originalRequest).toBe("Make a new Minesweeper game in HTML");
+  });
   it("keeps subsequent user design choices and latest version of code", () => {
     const newAnswer = {role:"assistant",content:ticks + "html\n" + game.replace("mines = 10","mines = 20") + "\n" + ticks};
     const result = prepareGeneration("Make the colors purple",
