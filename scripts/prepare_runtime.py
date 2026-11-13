@@ -5,7 +5,6 @@ Users install the resulting LocalForge package and download only the GGUF model.
 """
 import hashlib
 import io
-import os
 import pathlib
 import platform
 import shutil
@@ -69,9 +68,22 @@ def main():
                     write_blob(member.filename, archive.read(member))
     else:
         with tarfile.open(fileobj=io.BytesIO(payload), mode='r:gz') as archive:
+            links = []
             for member in archive:
-                if member.isfile() and include(member.name):
+                if not include(member.name):
+                    continue
+                if member.isfile():
                     write_blob(member.name, archive.extractfile(member).read())
+                elif member.issym() or member.islnk():
+                    links.append((pathlib.PurePosixPath(member.name).name,
+                                  pathlib.PurePosixPath(member.linkname).name))
+            # Preserve SONAME aliases needed by Linux shared library lookup.
+            for alias, target in links:
+                if alias != target and not (DEST / alias).exists() and (DEST / target).exists():
+                    (DEST / alias).symlink_to(target)
+    license_url = f'https://raw.githubusercontent.com/ggml-org/llama.cpp/{VERSION}/LICENSE'
+    with urllib.request.urlopen(license_url, timeout=30) as response:
+        (DEST / 'THIRD_PARTY_LLAMA_LICENSE.txt').write_bytes(response.read())
     exe = DEST / ('llama-server.exe' if system == 'Windows' else 'llama-server')
     if not exe.exists():
         raise RuntimeError('Expected llama-server binary missing in verified archive')

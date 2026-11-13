@@ -164,6 +164,7 @@ async fn download_model(app: AppHandle, engine: State<'_, Engine>) -> Result<Mod
         if received != total { return Err("Model download ended early".into()); }
         if format!("{:x}", hasher.finalize()) != etag { return Err("Downloaded model failed SHA-256 verification".into()); }
         check_gguf(&tmp)?;
+        if path.exists() { tokio::fs::remove_file(&path).await.map_err(|e| e.to_string())?; }
         tokio::fs::rename(&tmp, &path).await.map_err(|e| e.to_string())?;
         let _ = app.emit("model-download", DownloadProgress { received, total, status: "complete" });
         Ok(())

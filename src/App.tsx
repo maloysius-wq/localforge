@@ -4,7 +4,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   Activity, ArrowRight, ArrowUp, BookOpen, CheckCircle2, ChevronDown,
-  ChevronRight, Code2, Cpu, FileCode2, Folder, FolderOpen,
+  ChevronRight, Code2, FileCode2, Folder, FolderOpen,
   FolderPlus, HardDrive, History, Info, LayoutPanelLeft, Menu, MessageSquare,
   Moon, PanelRightClose, Plus, Settings2, ShieldCheck, Sparkles,
   Sun, Terminal, Trash2, X, StopCircle,
