@@ -80,3 +80,9 @@ The currently installed v0.2.1 doesn't have the update button. Install v0.3.0 **
 ### Backup and safety limits
 
 Source excerpts are read only after you explicitly inspect the selected folder. Backups are stored in LocalForge app data; only the most recent edit has a convenient one-click Undo shortcut, and undo refuses if the file changed after LocalForge applied it. Binary files, symlinked paths, known private/credential filenames, large files and paths escaping the chosen project are rejected. External code execution remains disabled. Keep Git or your own backups for important work.
+
+## v0.3.1 blank-project generation fix
+- Blank `.txt` files are now available as explicitly read-only project context, including an empty-file marker.
+- The model receives project context within the final user request, not as a second system message, and is instructed to generate proposed code instead of refusing because files are read-only.
+- Standalone browser games default to `index.html`, with HTML, CSS and JavaScript in one file. Users still review and approve file writes; the original placeholder text file is not automatically renamed or deleted.
+- Tests check the exact reported Minesweeper + blank text file scenario and project inventory, but live small-model behavior requires user validation.

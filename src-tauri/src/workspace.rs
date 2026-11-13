@@ -102,12 +102,12 @@ pub fn inspect_project(root: String) -> Result<Snapshot,String> {
     for e in &entries {
         if selected >= 5 || context.len() >= MAX_CONTEXT { break; }
         let extension = Path::new(&e.path).extension().and_then(|e|e.to_str()).unwrap_or("").to_lowercase();
-        if !["py","js","jsx","ts","tsx","html","css","json","md","toml","rs"].contains(&extension.as_str()) { continue; }
+        if !["py","js","jsx","ts","tsx","html","css","json","md","toml","rs","txt"].contains(&extension.as_str()) { continue; }
         let path = safe_path(&root, &e.path)?;
         if let Ok(Some(body)) = text_file(&path) {
             let excerpt: String = body.chars().take(1400).collect();
             if context.len() + excerpt.len() + e.path.len() + 50 > MAX_CONTEXT { break; }
-            context.push_str(&format!("\n--- {} (read-only excerpt) ---\n{}\n",e.path,excerpt));
+            context.push_str(&format!("\n--- {} (read-only excerpt) ---\n{}\n",e.path,if excerpt.is_empty() {"[empty file]"} else {&excerpt}));
             selected += 1;
         }
     }
@@ -174,6 +174,16 @@ mod tests {
             assert!(safe_path(&root,path).is_err(),"{path} was allowed");
         }
         assert!(safe_path(&root,"src/main.py").is_ok());
+    }
+    #[test] fn inventory_includes_blank_text_placeholder() {
+        let root = std::env::temp_dir().join(format!("localforge-txt-test-{}",uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("New Text Document.txt"), "").unwrap();
+        let snapshot = inspect_project(root.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(snapshot.files.len(), 1);
+        assert!(snapshot.context.contains("--- New Text Document.txt (read-only excerpt) ---"));
+        assert!(snapshot.context.contains("[empty file]"));
+        fs::remove_dir_all(root).unwrap();
     }
     #[test] fn hash_is_stable() { assert_eq!(digest("a"),"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"); }
 }

@@ -15,5 +15,6 @@ export function suggestFilename(language: string, precedingText: string): string
   if (match && !match[1].includes("..") && !match[1].startsWith("/")) return match[1];
   const ext = language.replace(/[^a-zA-Z]/g, "").toLowerCase();
   const normalized = ({ python: "py", javascript: "js", typescript: "ts", rust: "rs" } as Record<string, string>)[ext] || ext;
+  if (normalized === "html") return "index.html";
   return supported.has(normalized) ? `main.${normalized}` : "main.py";
 }

@@ -155,7 +155,7 @@ function SettingsModal({ theme, setTheme, onClose, engine, model, progress, down
       <div className="settings-section"><h3>Privacy and safety</h3>
         <div className="setting-summary"><ShieldCheck size={18}/><div><strong>Your data stays on this computer</strong><span>Chats stay local. Your selected project can be inspected on request and edited only after approving each proposed file change. No shell execution. Update checks reach the official GitHub API on request.</span></div></div>
       </div>
-      <div className="settings-footer">LocalForge 0.3.0 · CPU coding workspace</div>
+      <div className="settings-footer">LocalForge 0.3.1 · CPU coding workspace</div>
     </section>
   </div>;
 }
