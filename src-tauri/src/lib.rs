@@ -91,17 +91,28 @@ impl Engine {
         }
         Status { running: inner.process.is_some(), model: inner.model.clone(), generating: inner.generating }
     }
-    fn stop(&self) {
+    // Await the actual process exit before allowing an installer to replace
+    // any llama.cpp DLLs. The installer must not start if shutdown fails.
+    fn stop(&self) -> Result<(), String> {
         let mut inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(cancel) = inner.cancel.take() { cancel.store(true, Ordering::Relaxed); }
-        if let Some(mut process) = inner.process.take() {
-            let _ = process.kill();
-            let _ = process.wait();
+        if let Some(process) = inner.process.as_mut() {
+            if process.try_wait().map_err(|e| format!("Cannot check model process: {e}"))?.is_none() {
+                if let Err(err) = process.kill() {
+                    // A natural exit between try_wait and kill is fine.
+                    if process.try_wait().map_err(|e| format!("Cannot check model process: {e}"))?.is_none() {
+                        return Err(format!("Could not stop the CPU model process: {err}"));
+                    }
+                }
+            }
+            process.wait().map_err(|e| format!("Cannot wait for model shutdown: {e}"))?;
         }
+        inner.process = None;
         inner.port = None;
         inner.key = None;
         inner.model = None;
         inner.generating = false;
+        Ok(())
     }
 }
 
@@ -249,12 +260,12 @@ async fn start_model(app: AppHandle, engine: State<'_, Engine>, model_path: Opti
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
-    engine.stop();
+    let _ = engine.stop();
     Err(format!("Model did not become ready in 120 seconds (file size {size} bytes). Try fewer threads or inspect the runtime log"))
 }
 fn model_path_default(app: &AppHandle) -> Result<PathBuf, String> { model_path(app) }
 #[tauri::command]
-fn stop_model(engine: State<'_, Engine>) -> Status { engine.stop(); engine.status() }
+fn stop_model(engine: State<'_, Engine>) -> Result<Status, String> { engine.stop()?; Ok(engine.status()) }
 #[tauri::command]
 fn cancel_generation(engine: State<'_, Engine>) {
     if let Some(flag) = engine.inner.lock().unwrap_or_else(|p| p.into_inner()).cancel.as_ref() {
@@ -367,6 +378,27 @@ mod prompt_tests {
     use super::*;
 
     #[test]
+    fn model_shutdown_clears_state_and_is_safe_to_repeat() {
+        let engine = Engine::default();
+        let cancel = Arc::new(AtomicBool::new(false));
+        {
+            let mut inner = engine.inner.lock().unwrap();
+            inner.port = Some(31000);
+            inner.key = Some("test-only".into());
+            inner.model = Some("test-model.gguf".into());
+            inner.generating = true;
+            inner.cancel = Some(cancel.clone());
+        }
+        engine.stop().unwrap();
+        assert!(cancel.load(Ordering::Relaxed));
+        let status = engine.status();
+        assert!(!status.running);
+        assert!(!status.generating);
+        assert!(status.model.is_none());
+        engine.stop().unwrap();
+    }
+
+    #[test]
     fn new_project_policy_requests_real_code_instead_of_starter_files() {
         assert!(CODING_SYSTEM_PROMPT.contains("DELIVER working source code"));
         assert!(CODING_SYSTEM_PROMPT.contains("Never ask the user to supply project structure"));
@@ -437,7 +469,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![model_info, engine_status, download_model, start_model, stop_model, cancel_generation, generate, workspace::inspect_project, workspace::read_project_file, workspace::apply_project_change, workspace::undo_project_change, updates::check_for_updates, updates::install_verified_update])
         .on_window_event(|window, event| {
-            if matches!(event, WindowEvent::Destroyed) { window.state::<Engine>().stop(); }
+            if matches!(event, WindowEvent::Destroyed) { let _ = window.state::<Engine>().stop(); }
         })
         .run(tauri::generate_context!())
         .expect("Failed to start LocalForge");

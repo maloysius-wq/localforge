@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{path::PathBuf, process::Command, time::Duration};
 use tauri::{AppHandle, Emitter, Manager};
+use crate::Engine;
 use tokio::io::AsyncWriteExt;
 
 const RELEASE_API: &str = "https://api.github.com/repos/maloysius-wq/localforge/releases/latest";
@@ -93,6 +94,12 @@ pub async fn install_verified_update(app:AppHandle)->Result<(),String> {
         Ok(())
     }.await;
     if let Err(err)=operation {let _=tokio::fs::remove_file(&target).await; return Err(err);}
+    // A running llama-server has ggml-base.dll loaded, so Windows refuses to
+    // replace it. Explicitly terminate and REAP the owned child before the
+    // installer starts. app.exit() alone does not guarantee window event cleanup.
+    app.state::<Engine>().stop().map_err(|e|format!(
+        "The CPU model is still running; update was not launched: {e}. Unload the model and retry"
+    ))?;
     // Visible native installer asks the user for any required permissions. Never use shell.
     Command::new(&target).spawn().map_err(|e|format!("Could not launch verified installer: {e}"))?;
     app.exit(0);

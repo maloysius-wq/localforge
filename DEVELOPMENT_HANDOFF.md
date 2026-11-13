@@ -62,3 +62,9 @@ A pleasant GUI-first, offline CPU-only software-building workspace for older Win
 - Inspection now includes bounded UTF-8 .txt excerpts and marks empty files. Project snapshots are attached as untrusted data to the latest user request instead of a second system-role message. Safety constraints still prohibit automatic unapproved writes, and source-file text is not treated as instructions.
 - The coding policy now clarifies that read-only context does not forbid proposed source code; HTML games should generate one standalone `index.html`. HTML fence proposals default to index.html if no explicit filename.
 - Tests cover the exact Minesweeper+TXT request, .txt inspection, context construction, and filename detection. Packaging checks do not establish live model quality; re-test on Windows with a fresh conversation.
+
+## v0.3.2 update install DLL lock fix
+- Report: NSIS fails to overwrite `%LOCALAPPDATA%\\LocalForge\\runtime\\ggml-base.dll` when upgrading after v0.3.0 because llama-server is still running. The update command spawned the installer and called `app.exit(0)`, which does not guarantee window Destroyed cleanup of Engine.
+- Change: `Engine::stop()` now returns a result and checks/awaits actual owned child exit (without silently ignoring failure). The verified updater calls stop before launching the installer; it aborts if shutdown fails. Unloading from Settings also surfaces shutdown errors. Window Destroyed best-effort stop remains.
+- Rust test covers cancellation, state clearing and idempotent stop. A real Windows upgrade and post-update model-load smoke test remain required; CI packaging alone cannot prove file-lock behavior in the field.
+- v0.3.1 cannot fix itself: affected users should Abort installer, stop LocalForge/llama-server in Task Manager or reboot, reinstall v0.3.1 (or later), and avoid Ignore. No need to remove model data.
