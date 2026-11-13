@@ -4,7 +4,7 @@ export type CodeTask = { target: CodeTarget; request: string; originalRequest: s
 
 const creation = /\b(build|create|make|turn|convert|implement|generate|write|develop|code|finish|complete|expand)\b/i;
 const artifact = /\b(game|app|application|program|html|css|javascript|typescript|python|script|website|page|file|feature|code|function|project|minesweeper|calculator)\b/i;
-const continuation = /^(?:please\s+)?(?:expand(?:\s+it)?|finish(?:\s+it)?|complete(?:\s+it)?|write\s+(?:the\s+)?code|code\s+it|do\s+it|actually\s+(?:write|build|code)|make\s+it\s+(?:work|complete)|implement\s+it|add\b|change\b|modify\b|fix\b|improve\b|update\b|remove\b|refactor\b|adjust\b|tweak\b|now\b)/i;
+const continuation = /^(?:please\s+)?(?:expand(?:\s+it)?|finish(?:\s+it)?|complete(?:\s+it)?|write\s+(?:the\s+)?code|code\s+it|do\s+it|actually\s+(?:write|build|code)|make\s+it\s+(?:work|complete)|implement\s+it|add\b|change\b|modify\b|fix\b|improve\b|update\b|remove\b|refactor\b|adjust\b|tweak\b|now\b|make\b|set\b)/i;
 
 function looksLikeBuildRequest(prompt: string): boolean {
   return creation.test(prompt) && artifact.test(prompt);
