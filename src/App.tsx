@@ -477,6 +477,7 @@ export default function App() {
       return record({ ...s, threads, activeThreadId: threadId }, engine.running ? "Prompt sent to local model" : "Prompt saved locally (model offline)");
     });
     setDraft("");
+    setBatchProposal(null);setProposal(null);
     if (!engine.running) return;
     const requestId = newId();
     canceledRef.current = false;
@@ -602,7 +603,13 @@ export default function App() {
         </div> : <EmptyChat project={activeProject} onPrompt={prompt => { setDraft(prompt); textareaRef.current?.focus(); }}/>}</div>
       <div className="composer-area"><form onSubmit={onSubmit} className="composer">
         <textarea ref={textareaRef} rows={2} value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={onComposerKeyDown} placeholder="Describe what you'd like to build…" aria-label="Message" />
-        <div className="composer-bottom"><div className="composer-meta"><span><Code2 size={14}/> Coding workspace</span><span className="composer-separator">·</span><span>Project edits require approval</span></div>
+        <div className="composer-bottom"><div className="composer-meta">
+            <span><Code2 size={14}/> Coding workspace</span><span className="composer-separator">·</span>
+            <span>One approval to apply edits</span>
+            <ContextRing used={activeThread?.id && contextMeters[activeThread.id] ? contextMeters[activeThread.id].used : null}
+              capacity={activeThread?.id && contextMeters[activeThread.id] ? contextMeters[activeThread.id].max : contextTokens}
+              kind={activeThread?.id && contextMeters[activeThread.id] ? contextMeters[activeThread.id].kind : "prompt"}/>
+          </div>
           {generating ? <button type="button" className="send-button stop-button" onClick={() => { canceledRef.current = true; void cancelGeneration(); }} title="Stop generation" aria-label="Stop generation"><StopCircle size={19}/></button> : <button type="submit" className="send-button" disabled={!draft.trim()} title={engine.running ? "Send prompt" : "Save prompt"} aria-label={engine.running ? "Send prompt" : "Save prompt"}><ArrowUp size={19}/></button>}
         </div>
       </form><div className="composer-caption">{engine.running ? "Enter to send · Shift+Enter for a new line · CPU only" : "Enter to save · Shift+Enter for a new line · Load a model in Settings"}</div></div>
@@ -619,7 +626,7 @@ export default function App() {
         </> : <>
           <div className="detail-section"><div className="detail-section-heading"><FolderOpen size={18}/><h3>Project overview</h3></div>
             {activeProject ? <><div className="project-facts"><span>Name</span><strong>{activeProject.name}</strong><span>Path</span><code title={activeProject.path}>{activeProject.path}</code><span>Added</span><strong>{dateLabel(activeProject.addedAt)}</strong><span>Conversations</span><strong>{workspace.threads.filter(t => t.projectId === activeProject.id).length}</strong></div>
-              <div className="project-privacy"><ShieldCheck size={16}/> Inspection is explicitly requested. Each code change shows its before/after preview and requires approval. No commands run automatically.</div>
+              <div className="project-privacy"><ShieldCheck size={16}/> LocalForge reads selected project source to prepare edits. Model-generated changes are staged for one review and approval before writing. No shell commands run automatically.</div>
               <button type="button" className="model-action primary project-inspect" disabled={inspectBusy} onClick={() => void inspectCurrentProject()}>
                 <Eye size={15}/> {inspectBusy ? "Inspecting…" : "Inspect project (read-only)"}</button>
               {inspected?.projectId === activeProject.id && <div className="project-file-browser">
@@ -636,6 +643,29 @@ export default function App() {
       <div className="detail-footer"><div><span className="footer-small-dot"/> Local-first workspace</div><span>0.3.6</span></div>
     </aside>}
     {(notice || storageWarning) && <div className="toast" role="alert"><Info size={17}/><span>{storageWarning ? "Local storage is unavailable or full. Changes may not survive restarting the app." : notice}</span><button aria-label="Dismiss notification" onClick={() => { setNotice(""); setStorageWarning(false); }}><X size={16}/></button></div>}
+    {batchProposal && <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget && !batchBusy)setBatchProposal(null);}}>
+      <section className="settings-modal proposal-modal batch-review-modal" role="dialog" aria-modal="true" aria-labelledby="batch-review-title">
+        <div className="modal-heading"><div><span className="eyebrow">ONE APPROVAL TO WRITE FILES</span>
+          <h2 id="batch-review-title">Review {batchProposal.edits.length} proposed file {batchProposal.edits.length===1?"change":"changes"}</h2></div>
+          <button type="button" className="icon-button" aria-label="Discard proposed changes" disabled={batchBusy} onClick={()=>setBatchProposal(null)}><X size={20}/></button></div>
+        <p className="batch-review-intro">LocalForge prepared these edits for your selected project. <strong>No files have been written yet.</strong> Inspect the before and after contents, then click Approve changes once to apply the complete batch.</p>
+        <div className="batch-review-files">
+          {batchProposal.edits.map((edit,index)=><details key={edit.path} open={index===0} className="batch-review-file">
+            <summary><FileCode2 size={15}/><strong>{edit.path}</strong><span>{edit.original.exists?"Replace existing":"Create new"}</span></summary>
+            <div className="proposal-preview">
+              <div><strong>{edit.original.exists?"CURRENT FILE":"NEW FILE"}</strong><pre>{edit.original.exists?edit.original.content:"(Does not exist yet)"}</pre></div>
+              <div><strong>PROPOSED SOURCE</strong><pre>{edit.content}</pre></div>
+            </div>
+          </details>)}
+        </div>
+        <div className="batch-review-actions">
+          <button type="button" className="model-action secondary" disabled={batchBusy} onClick={()=>setBatchProposal(null)}>Discard changes</button>
+          <button type="button" className="model-action primary" disabled={batchBusy} onClick={()=>void approveBatch()}>
+            {batchBusy?"Applying changes…":<><ClipboardCheck size={16}/> Approve changes ({batchProposal.edits.length} files)</>}
+          </button>
+        </div>
+      </section>
+    </div>}
     {proposal && <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setProposal(null);}}>
       <section className="settings-modal proposal-modal" role="dialog" aria-modal="true" aria-label="Review proposed project change">
         <div className="modal-heading"><div><span className="eyebrow">REVIEW BEFORE WRITING</span><h2>Propose file change</h2></div>
