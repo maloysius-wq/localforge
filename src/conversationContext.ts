@@ -36,7 +36,7 @@ export function prepareGeneration(prompt: string, history: RecentMessage[], snap
       + (lastCode ? "\nUpdate the previous implementation and output a complete updated file."
         : "\nProduce the requested source. There is no previous code attached.");
     return { messages:[{role:"user", content:clip(message,budget.total)}], task,
-      projectContext:snapshot ? clip(snapshot, lastCode ? Math.min(1500,budget.project) : budget.project) : null };
+      projectContext:snapshot ? clip(snapshot,budget.project) : null };
   }
   // Explanations should keep real conversational turns, not reset the model.
   const recent = history.slice(-Math.min(36,budget.recent*2)).map(m => ({
