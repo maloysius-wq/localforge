@@ -5,6 +5,7 @@ export type EngineStatus = { running: boolean; model: string | null; generating:
 export type ModelInfo = { installed: boolean; path: string; size: number };
 export type DownloadProgress = { received: number; total: number; status: "downloading" | "complete" };
 export type TokenEvent = { requestId: string; delta: string };
+export type ContextUsageEvent = { requestId: string; usedTokens: number; maxTokens: number; kind: "prompt" | "total" };
 export type GenerationMessage = { role: "user" | "assistant"; content: string };
 
 export const emptyStatus: EngineStatus = { running: false, model: null, generating: false };
@@ -19,3 +20,5 @@ export const generate = (requestId: string, messages: GenerationMessage[], proje
 export const cancelGeneration = () => invoke<void>("cancel_generation");
 export const onToken = (handler: (value: TokenEvent) => void) => listen<TokenEvent>("model-token", e => handler(e.payload));
 export const onDownload = (handler: (value: DownloadProgress) => void) => listen<DownloadProgress>("model-download", e => handler(e.payload));
+
+export const onContextUsage = (handler: (value: ContextUsageEvent) => void) => listen<ContextUsageEvent>("model-context", e => handler(e.payload));

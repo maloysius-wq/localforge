@@ -18,3 +18,10 @@ export function suggestFilename(language: string, precedingText: string): string
   if (normalized === "html") return "index.html";
   return supported.has(normalized) ? `main.${normalized}` : "main.py";
 }
+
+export interface BatchEditInput { path: string; expectedSha: string | null; content: string }
+export interface BatchApplied { token: string; paths: string[] }
+export const applyProjectChanges = (root: string, edits: BatchEditInput[]) =>
+  invoke<BatchApplied>("apply_project_changes", { root, edits });
+export const undoProjectChanges = (root: string, token: string) =>
+  invoke<string[]>("undo_project_changes", { root, token });
