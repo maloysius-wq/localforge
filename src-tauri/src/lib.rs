@@ -352,8 +352,8 @@ fn build_conversation(messages: Vec<ChatMessage>, project_context: Option<String
     if messages.last().is_none_or(|m| m.role != "user") {
         return Err("The latest message must be from the user".into());
     }
-    const MAX_LATEST_CHARS: usize = 4800;
-    const MAX_HISTORY_CHARS: usize = 4000;
+    const MAX_LATEST_CHARS: usize = 9000;
+    const MAX_HISTORY_CHARS: usize = 9000;
     let mut history = Vec::new();
     let mut remaining = MAX_HISTORY_CHARS;
     for (index, msg) in messages.into_iter().rev().enumerate() {
