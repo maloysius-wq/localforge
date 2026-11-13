@@ -45,7 +45,7 @@ function MessageBody({ content, isAssistant }: { content: string; isAssistant: b
           }).catch(() => setCopied(null));
         }}>{copied === index ? "Copied" : "Copy code"}</button></div>
         <pre><code>{part.content}</code></pre>
-      </div>))}</div>;
+      </div>)}</div>;
 }
 
 function ActivityItem({ event }: { event: EventLog }) {
