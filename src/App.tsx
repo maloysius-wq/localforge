@@ -18,6 +18,7 @@ import { ModelManager } from "./ModelManager";
 import { splitCodeBlocks } from "./codeBlocks";
 import { containsImplementation, retryForActualCode } from "./codeTasks";
 import { prepareGeneration } from "./conversationContext";
+import { DEFAULT_CONTEXT_TOKENS, validContextTokens } from "./contextConfig";
 import { inspectProject, readProjectFile, applyProjectChange, undoProjectChange, suggestFilename,
   type ProjectSnapshot, type ProjectFile } from "./projectTools";
 import { checkForUpdates, installUpdate, onUpdateProgress, type UpdateInfo } from "./updates";
@@ -121,7 +122,7 @@ function UpdateSettings() {
   </div>;
 }
 
-function SettingsModal({ theme, setTheme, onClose, engine, model, progress, downloading, modelBusy, modelPath, threads, setThreads, autoLoad, setAutoLoad, download, load, unload, choose }: {
+function SettingsModal({ theme, setTheme, onClose, engine, model, progress, downloading, modelBusy, modelPath, threads, setThreads, contextTokens, setContextTokens, autoLoad, setAutoLoad, download, load, unload, choose }: {
   theme: WorkspaceState["theme"];
   setTheme: (theme: WorkspaceState["theme"]) => void;
   onClose: () => void;
@@ -133,6 +134,8 @@ function SettingsModal({ theme, setTheme, onClose, engine, model, progress, down
   modelPath: string | null;
   threads: number;
   setThreads: (threads: number) => void;
+  contextTokens: number;
+  setContextTokens: (n: number) => void;
   autoLoad: boolean;
   setAutoLoad: (value: boolean) => void;
   download: () => void;
@@ -154,13 +157,13 @@ function SettingsModal({ theme, setTheme, onClose, engine, model, progress, down
         </div>
       </div>
       <div className="settings-section"><h3>Local inference</h3><p>Download or select a GGUF model, then load it into memory. LocalForge bundles the CPU-only runtime with its installer.</p>
-        <ModelManager engine={engine} model={model} progress={progress} downloading={downloading} busy={modelBusy} modelPath={modelPath} threads={threads} setThreads={setThreads} autoLoad={autoLoad} setAutoLoad={setAutoLoad} onDownload={download} onLoad={load} onUnload={unload} onChoose={choose}/>
+        <ModelManager engine={engine} model={model} progress={progress} downloading={downloading} busy={modelBusy} modelPath={modelPath} threads={threads} setThreads={setThreads} contextTokens={contextTokens} setContextTokens={setContextTokens} autoLoad={autoLoad} setAutoLoad={setAutoLoad} onDownload={download} onLoad={load} onUnload={unload} onChoose={choose}/>
       </div>
       <div className="settings-section"><h3>Application updates</h3><UpdateSettings/></div>
       <div className="settings-section"><h3>Privacy and safety</h3>
         <div className="setting-summary"><ShieldCheck size={18}/><div><strong>Your data stays on this computer</strong><span>Chats stay local. Your selected project can be inspected on request and edited only after approving each proposed file change. No shell execution. Update checks reach the official GitHub API on request.</span></div></div>
       </div>
-      <div className="settings-footer">LocalForge 0.3.4 · CPU coding workspace</div>
+      <div className="settings-footer">LocalForge 0.3.5 · CPU coding workspace</div>
     </section>
   </div>;
 }
@@ -186,6 +189,10 @@ export default function App() {
   const [threads, setThreads] = useState(() => {
     const n = Number(localStorage.getItem("localforge.threads.v1") || 2);
     return Number.isInteger(n) && n >= 1 && n <= 16 ? n : 2;
+  });
+  const [contextTokens, setContextTokens] = useState(() => {
+    const n = Number(localStorage.getItem("localforge.context-tokens.v1") || DEFAULT_CONTEXT_TOKENS);
+    return validContextTokens(n) ? n : DEFAULT_CONTEXT_TOKENS;
   });
   const [autoLoad, setAutoLoad] = useState(() => localStorage.getItem("localforge.auto-load.v1") !== "false");
   const [fullscreen, setFullscreen] = useState(() => isTauri());
@@ -213,8 +220,9 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("localforge.model-path.v1", JSON.stringify(modelPath));
     localStorage.setItem("localforge.threads.v1", String(threads));
+    localStorage.setItem("localforge.context-tokens.v1", String(contextTokens));
     localStorage.setItem("localforge.auto-load.v1", String(autoLoad));
-  }, [modelPath, threads, autoLoad]);
+  }, [modelPath, threads, contextTokens, autoLoad]);
   useEffect(() => {
     document.documentElement.dataset.theme = workspace.theme;
     if (!saveWorkspace(workspace)) setStorageWarning(true);
@@ -248,7 +256,7 @@ export default function App() {
             setModelBusy(true);
             setNotice("Loading local CPU model automatically…");
             try {
-              const started = await startModel(modelPath, threads);
+              const started = await startModel(modelPath, threads, contextTokens);
               if (!disposed) { setEngine(started); setNotice("Local CPU model loaded automatically."); }
             } catch (error) {
               if (!disposed) setNotice("Automatic model load failed. Open Settings to retry: " + String(error));
@@ -303,7 +311,7 @@ export default function App() {
   async function handleLoadModel() {
     setModelBusy(true);
     try {
-      setEngine(await startModel(modelPath, threads));
+      setEngine(await startModel(modelPath, threads, contextTokens));
       setNotice("CPU coding model loaded. Chat responses are now generated locally.");
     } catch (error) { setNotice(`Could not load model: ${String(error)}`); }
     finally {
@@ -443,7 +451,7 @@ export default function App() {
     setLiveText("");
     setGenerating(true);
     const snapshot = activeProject && inspected?.projectId === activeProject.id ? inspected.data.context : null;
-    const { task, messages: codeMessages, projectContext } = prepareGeneration(content, history, snapshot);
+    const { task, messages: codeMessages, projectContext } = prepareGeneration(content, history, snapshot, contextTokens);
     void (async () => {
       try {
         let reply = await generate(requestId, codeMessages, projectContext, !!task);
@@ -496,7 +504,7 @@ export default function App() {
         </div>)}
       </div>
       <div className="sidebar-footer">
-        <div className="sidebar-status"><span className="status-indicator"/><div><strong>{engine.running ? "CPU model ready" : "Model not loaded"}</strong><span>Offline coding · v0.3.4</span></div></div>
+        <div className="sidebar-status"><span className="status-indicator"/><div><strong>{engine.running ? "CPU model ready" : "Model not loaded"}</strong><span>Offline coding · v0.3.5</span></div></div>
         <button className="sidebar-settings" onClick={() => setSettingsOpen(true)}><Settings2 size={18}/> Settings <span>⌘,</span></button>
       </div>
     </aside>
@@ -559,7 +567,7 @@ export default function App() {
             </> : <div className="detail-empty"><Folder size={24}/><p>No project selected</p><span>Add a project folder to associate conversations with real work.</span><button onClick={addProject}>Choose folder <ArrowRight size={14}/></button></div>}</div>
         </>}
       </div>
-      <div className="detail-footer"><div><span className="footer-small-dot"/> Local-first workspace</div><span>0.3.4</span></div>
+      <div className="detail-footer"><div><span className="footer-small-dot"/> Local-first workspace</div><span>0.3.5</span></div>
     </aside>}
     {(notice || storageWarning) && <div className="toast" role="alert"><Info size={17}/><span>{storageWarning ? "Local storage is unavailable or full. Changes may not survive restarting the app." : notice}</span><button aria-label="Dismiss notification" onClick={() => { setNotice(""); setStorageWarning(false); }}><X size={16}/></button></div>}
     {proposal && <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setProposal(null);}}>
@@ -582,7 +590,7 @@ export default function App() {
         </div>
       </section></div>}
     {settingsOpen && <SettingsModal theme={workspace.theme} setTheme={theme => setWorkspace(s => ({ ...s, theme }))} onClose={() => setSettingsOpen(false)}
-      engine={engine} model={model} progress={progress} downloading={downloading} modelBusy={modelBusy} modelPath={modelPath} threads={threads} setThreads={setThreads} autoLoad={autoLoad} setAutoLoad={setAutoLoad}
+      engine={engine} model={model} progress={progress} downloading={downloading} modelBusy={modelBusy} modelPath={modelPath} threads={threads} setThreads={setThreads} contextTokens={contextTokens} setContextTokens={setContextTokens} autoLoad={autoLoad} setAutoLoad={setAutoLoad}
       download={() => void handleDownload()} load={() => void handleLoadModel()} unload={() => void handleUnloadModel()} choose={() => void handleChooseModel()}/>}
     <div className="mobile-block"><div className="welcome-mark"><Code2 size={30}/></div><h2>LocalForge</h2><p>This desktop workspace is designed for wider screens. Please resize your window.</p></div>
   </div>;
