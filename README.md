@@ -86,3 +86,6 @@ Source excerpts are read only after you explicitly inspect the selected folder. 
 - The model receives project context within the final user request, not as a second system message, and is instructed to generate proposed code instead of refusing because files are read-only.
 - Standalone browser games default to `index.html`, with HTML, CSS and JavaScript in one file. Users still review and approve file writes; the original placeholder text file is not automatically renamed or deleted.
 - Tests check the exact reported Minesweeper + blank text file scenario and project inventory, but live small-model behavior requires user validation.
+
+## v0.3.2 updater DLL-in-use fix
+On Windows, the in-app updater now waits until LocalForge's owned llama-server process exits before launching the verified NSIS installer. This prevents its loaded ggml-base.dll from blocking upgrades. If an older version is already stuck during installation, cancel the installer and end only LocalForge and its owned llama-server processes in Task Manager, or reboot, before installing. Do not select Ignore in the DLL-writing error, and do not delete downloaded models or conversation data.
