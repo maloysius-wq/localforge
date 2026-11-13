@@ -448,10 +448,14 @@ export default function App() {
         })));
       const entry={root:batchProposal.root,token:applied.token,path:applied.paths.join(", "),paths:applied.paths};
       setLastEdit(entry);
-      localStorage.setItem("localforge.last-edit.v1",JSON.stringify(entry));
+      let undoPersisted = true;
+      try { localStorage.setItem("localforge.last-edit.v1",JSON.stringify(entry)); }
+      catch { undoPersisted = false; }
       setWorkspace(state => record(state,"Approved "+applied.paths.length+" file change(s): "+entry.path));
       setBatchProposal(null);setInspected(null);setViewedFile(null);
-      setNotice("Wrote "+applied.paths.length+" project file(s). Undo last change restores the full batch.");
+      setNotice("Wrote "+applied.paths.length+" project file(s). "
+        +(undoPersisted ? "Undo last change restores the full batch."
+          : "The undo button works in this session, but its shortcut may not persist after restart because local storage is full."));
     } catch(error) { setNotice("Could not apply the reviewed changes: "+String(error)); }
     finally { setBatchBusy(false); }
   }
