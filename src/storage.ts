@@ -1,6 +1,6 @@
 export type Theme = "dark" | "light";
 export interface Project { id: string; name: string; path: string; addedAt: number }
-export interface ChatMessage { id: string; role: "user" | "system"; content: string; createdAt: number }
+export interface ChatMessage { id: string; role: "user" | "assistant" | "system"; content: string; createdAt: number }
 export interface Thread { id: string; projectId: string | null; title: string; createdAt: number; updatedAt: number; messages: ChatMessage[] }
 export interface EventLog { id: string; message: string; at: number }
 export interface WorkspaceState {
@@ -32,7 +32,7 @@ export function loadWorkspace(storage: Pick<Storage, "getItem"> = localStorage):
     const projectIds = new Set(projects.map(p => p.id));
     const threads = Array.isArray(data.threads)
       ? data.threads.filter((t): t is Thread => !!t && typeof t.id === "string" && typeof t.title === "string" && typeof t.createdAt === "number" && typeof t.updatedAt === "number" && (t.projectId === null || typeof t.projectId === "string") && Array.isArray(t.messages))
-        .map(t => ({ ...t, messages: t.messages.filter(m => m && typeof m.id === "string" && (m.role === "user" || m.role === "system") && typeof m.content === "string" && typeof m.createdAt === "number") }))
+        .map(t => ({ ...t, messages: t.messages.filter(m => m && typeof m.id === "string" && (m.role === "user" || m.role === "assistant" || m.role === "system") && typeof m.content === "string" && typeof m.createdAt === "number") }))
       : [];
     const threadIds = new Set(threads.map(t => t.id));
     return {
