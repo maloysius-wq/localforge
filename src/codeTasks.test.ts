@@ -18,6 +18,15 @@ describe("code-first intent routing", () => {
     expect(task?.request).toContain("Write the code itself");
     expect(task?.request).not.toContain("I can expand it");
   });
+  it("routes direct edits of existing project files without requiring previous build history", () => {
+    expect(codeTaskFor("Fix index.html so the restart button works", [])?.target).toBe("html");
+    expect(codeTaskFor("Please update src/main.py to catch file errors", [])?.target).toBe("python");
+    expect(codeTaskFor("Can you modify script.js to use keyboard shortcuts", [])).not.toBeNull();
+  });
+  it("keeps a previously named file-edit task active through follow-ups", () => {
+    const history=[{role:"user",content:"Fix index.html"},{role:"assistant",content:"Here is the code"}];
+    expect(codeTaskFor("Also add a timer",history)?.originalRequest).toBe("Fix index.html");
+  });
   it("leaves ordinary explanation questions in chat mode", () => {
     expect(codeTaskFor("Explain what this JavaScript does", [])).toBeNull();
   });
