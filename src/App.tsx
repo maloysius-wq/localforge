@@ -7,7 +7,7 @@ import {
   ChevronRight, Code2, FileCode2, Folder, FolderOpen,
   FolderPlus, HardDrive, History, Info, LayoutPanelLeft, Menu, MessageSquare,
   Moon, PanelRightClose, Plus, Settings2, ShieldCheck, Sparkles,
-  Sun, Terminal, Trash2, X, StopCircle,
+  Sun, Terminal, Trash2, X, StopCircle, RefreshCw, RotateCcw, FilePlus2, Eye, ClipboardCheck,
 } from "lucide-react";
 import {
   loadWorkspace, newId, projectLabel, saveWorkspace, uniqueProject,
@@ -15,6 +15,9 @@ import {
 } from "./storage";
 import { ModelManager } from "./ModelManager";
 import { splitCodeBlocks } from "./codeBlocks";
+import { inspectProject, readProjectFile, applyProjectChange, undoProjectChange, suggestFilename,
+  type ProjectSnapshot, type ProjectFile } from "./projectTools";
+import { checkForUpdates, installUpdate, onUpdateProgress, type UpdateInfo } from "./updates";
 import {
   type DownloadProgress, type EngineStatus, type ModelInfo, emptyStatus, emptyModel,
   getStatus, getModelInfo, downloadModel, startModel, stopModel,
@@ -32,13 +35,16 @@ const timeLabel = (timestamp: number) => new Intl.DateTimeFormat(undefined, { ho
 const dateLabel = (timestamp: number) => new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(timestamp);
 const shortTitle = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, 52) || "New conversation";
 
-function MessageBody({ content, isAssistant }: { content: string; isAssistant: boolean }) {
+function MessageBody({ content, isAssistant, onPropose }: { content: string; isAssistant: boolean;
+  onPropose?: (code: string, language: string, hint: string) => void }) {
   const [copied, setCopied] = useState<number | null>(null);
   if (!isAssistant) return <div className="message-text">{content}</div>;
   return <div className="message-body">{splitCodeBlocks(content).map((part, index) => part.type === "text"
     ? <div key={index} className="message-text">{part.content}</div>
     : <div key={index} className="code-block">
-        <div className="code-heading"><span>{part.language || "code"}</span><button type="button" onClick={() => {
+        <div className="code-heading"><span>{part.language || "code"}</span>
+          {onPropose && <button type="button" onClick={() => onPropose(part.content, part.language, content.slice(0, content.indexOf(part.content)))}>Propose file change</button>}
+          <button type="button" onClick={() => {
           void navigator.clipboard.writeText(part.content).then(() => {
             setCopied(index);
             window.setTimeout(() => setCopied(value => value === index ? null : value), 1600);
@@ -69,6 +75,47 @@ function EmptyChat({ onPrompt, project }: { onPrompt: (prompt: string) => void; 
       </button>
     )}</div>
   </section>;
+}
+
+function UpdateSettings() {
+  const [info, setInfo] = useState<UpdateInfo | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [error, setError] = useState("");
+  const [progress, setProgress] = useState(0);
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void onUpdateProgress(e => { if (!disposed && e.total > 0) setProgress(Math.floor(e.received/e.total*100)); })
+      .then(off => {if (disposed) off(); else unlisten = off;}).catch(() => {});
+    return () => {disposed = true; unlisten?.();};
+  }, []);
+  async function check() {
+    setBusy(true); setError("");
+    try {setInfo(await checkForUpdates());}
+    catch(e) {setError(`Could not check GitHub Releases: ${String(e)}`);}
+    finally {setBusy(false);}
+  }
+  async function install() {
+    if (!info?.installable || !window.confirm(`Download and install LocalForge ${info.latestVersion}? The current app will close to run the verified Windows installer.`)) return;
+    setInstalling(true);setProgress(0);setError("");
+    try {await installUpdate();}
+    catch(e) {setError(`Update was not installed: ${String(e)}`);setInstalling(false);}
+  }
+  return <div className="updates-section">
+    <div className="setting-summary"><RefreshCw size={18}/><div><strong>Updates from GitHub Releases</strong>
+      <span>Check for a newer version. Windows installations are downloaded and SHA-256 checked against GitHub release metadata before launch. Development Actions artifacts aren't eligible.</span></div></div>
+    <button type="button" className="model-action secondary" onClick={() => void check()} disabled={busy || installing}>
+      <RefreshCw size={15}/> {busy ? "Checking GitHub…" : "Check for updates"}</button>
+    {info && <div className="update-result"><strong>Installed: v{info.currentVersion} {info.latestVersion ? `· Latest release: ${info.latestVersion}` : ""}</strong>
+      <p>{info.available ? `An update is available. ${info.notes}` : (info.notes || "You're using the latest published version.")}</p>
+      {info.available && info.installable && <button type="button" className="model-action primary" onClick={() => void install()} disabled={installing}>
+        <RefreshCw size={15}/>{installing ? `Downloading verified installer… ${progress}%` : "Download and install update"}</button>}
+      {info.available && !info.installable && <p>No verified automatic installer is available for this operating system/release yet. See the official release page.</p>}
+      <a className="release-link" target="_blank" rel="noopener noreferrer" href={info.releaseUrl}>View official GitHub release</a>
+    </div>}
+    {error && <p className="update-error" role="alert">{error}</p>}
+  </div>;
 }
 
 function SettingsModal({ theme, setTheme, onClose, engine, model, progress, downloading, modelBusy, modelPath, threads, setThreads, download, load, unload, choose }: {
@@ -104,10 +151,11 @@ function SettingsModal({ theme, setTheme, onClose, engine, model, progress, down
       <div className="settings-section"><h3>Local inference</h3><p>Download or select a GGUF model, then load it into memory. LocalForge bundles the CPU-only runtime with its installer.</p>
         <ModelManager engine={engine} model={model} progress={progress} downloading={downloading} busy={modelBusy} modelPath={modelPath} threads={threads} setThreads={setThreads} onDownload={download} onLoad={load} onUnload={unload} onChoose={choose}/>
       </div>
+      <div className="settings-section"><h3>Application updates</h3><UpdateSettings/></div>
       <div className="settings-section"><h3>Privacy and safety</h3>
-        <div className="setting-summary"><ShieldCheck size={18}/><div><strong>Your data stays on this computer</strong><span>Conversations and project references stay on this computer. Model download reaches Hugging Face only when you request it. Chat inference runs on localhost. No code execution or project file access.</span></div></div>
+        <div className="setting-summary"><ShieldCheck size={18}/><div><strong>Your data stays on this computer</strong><span>Chats stay local. Your selected project can be inspected on request and edited only after approving each proposed file change. No shell execution. Update checks reach the official GitHub API on request.</span></div></div>
       </div>
-      <div className="settings-footer">LocalForge 0.2.1 · CPU coding chat</div>
+      <div className="settings-footer">LocalForge 0.3.0 · CPU coding workspace</div>
     </section>
   </div>;
 }
@@ -131,6 +179,14 @@ export default function App() {
   const [threads, setThreads] = useState(2);
   const [generating, setGenerating] = useState(false);
   const [liveText, setLiveText] = useState("");
+  const [inspected, setInspected] = useState<{ projectId: string; data: ProjectSnapshot } | null>(null);
+  const [inspectBusy, setInspectBusy] = useState(false);
+  const [viewedFile, setViewedFile] = useState<ProjectFile | null>(null);
+  const [proposal, setProposal] = useState<{ projectId: string; root: string; path: string; content: string; original: ProjectFile | null } | null>(null);
+  const [proposalBusy, setProposalBusy] = useState(false);
+  const [lastEdit, setLastEdit] = useState<{ root: string; token: string; path: string } | null>(() => {
+    try { const value = localStorage.getItem("localforge.last-edit.v1"); return value ? JSON.parse(value) : null; } catch {return null;}
+  });
   const pendingRef = useRef<{ requestId: string; threadId: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -256,6 +312,58 @@ export default function App() {
     if (!window.confirm(`Remove “${project.name}” from LocalForge? Its conversations will be removed here too. Project files on disk will not be touched.`)) return;
     setWorkspace(s => record({ ...s, projects: s.projects.filter(p => p.id !== project.id), threads: s.threads.filter(t => t.projectId !== project.id), activeProjectId: s.activeProjectId === project.id ? null : s.activeProjectId, activeThreadId: s.threads.some(t => t.id === s.activeThreadId && t.projectId === project.id) ? null : s.activeThreadId }, `Removed project ${project.name} from workspace`));
   }
+  async function inspectCurrentProject() {
+    if (!activeProject || inspectBusy) return;
+    const projectId = activeProject.id;
+    setInspectBusy(true);setViewedFile(null);
+    try {
+      const data = await inspectProject(activeProject.path);
+      setInspected({projectId,data});setDetailTab("project");setDetailsOpen(true);
+      setWorkspace(state => record(state, `Inspected ${data.files.length} local project files (read only)`));
+    } catch(e) {setNotice(`Project inspection failed: ${String(e)}`);}
+    finally {setInspectBusy(false);}
+  }
+  async function viewFile(path: string) {
+    if (!activeProject) return;
+    try {setViewedFile(await readProjectFile(activeProject.path,path));}
+    catch(e){setNotice(`Cannot read that source file: ${String(e)}`);}
+  }
+  function proposeCode(code: string, language: string, before: string) {
+    if (!activeProject) {setNotice("Select a project folder in the sidebar before proposing a file change.");return;}
+    setProposal({projectId:activeProject.id,root:activeProject.path,content:code,
+      path:suggestFilename(language,before),original:null});
+  }
+  async function previewProposal() {
+    if (!proposal || proposalBusy) return;
+    setProposalBusy(true);
+    try {const original=await readProjectFile(proposal.root,proposal.path);
+      setProposal(current=>current ? {...current,original}:null);
+    }catch(e){setNotice(`Could not preview the proposed change: ${String(e)}`);}
+    finally {setProposalBusy(false);}
+  }
+  async function approveProposal() {
+    if (!proposal || !proposal.original || proposalBusy) return;
+    if (!window.confirm(`Apply the reviewed change to ${proposal.path}? LocalForge will save an undo snapshot. This writes a real file on disk.`))return;
+    setProposalBusy(true);
+    try {
+      const result=await applyProjectChange(proposal.root,proposal.path,proposal.original.sha256,proposal.content);
+      const entry={root:proposal.root,token:result.token,path:result.path};
+      setLastEdit(entry);localStorage.setItem("localforge.last-edit.v1",JSON.stringify(entry));
+      setWorkspace(state=>record(state,`Approved file change: ${result.path}`));
+      setInspected(null);setViewedFile(null);setProposal(null);
+      setNotice(`Updated ${result.path}. The Undo last change button can restore it.`);
+    }catch(e){setNotice(`Change not applied: ${String(e)}`);}
+    finally{setProposalBusy(false);}
+  }
+  async function undoLast() {
+    if(!lastEdit || !activeProject || lastEdit.root !== activeProject.path)return;
+    if(!window.confirm(`Undo LocalForge's last change to ${lastEdit.path}? Undo will refuse if that file has changed since.`))return;
+    try{const path=await undoProjectChange(lastEdit.root,lastEdit.token);
+      localStorage.removeItem("localforge.last-edit.v1");setLastEdit(null);setInspected(null);setViewedFile(null);
+      setWorkspace(state=>record(state,`Restored ${path} from undo snapshot`));setNotice(`Restored ${path}.`);
+    }catch(e){setNotice(`Undo refused: ${String(e)}`);}
+  }
+
   function submitPrompt(text: string) {
     const content = text.trim();
     if (!content || generating) return;
@@ -263,7 +371,7 @@ export default function App() {
     const message: ChatMessage = { id: newId(), role: "user", content, createdAt: now };
     const current = workspace.threads.find(t => t.id === workspace.activeThreadId);
     const threadId = current?.id || newId();
-    const context = (current?.messages ?? []).slice(-10).map(m => ({ role: m.role === "user" ? "user" as const : "assistant" as const, content: m.content }));
+    const context = (current?.messages ?? []).slice(activeProject && inspected?.projectId === activeProject.id ? -4 : -10).map(m => ({ role: m.role === "user" ? "user" as const : "assistant" as const, content: m.content }));
     setWorkspace(s => {
       const exists = s.threads.some(t => t.id === threadId);
       const threads = exists ? s.threads.map(t => t.id === threadId
@@ -278,7 +386,8 @@ export default function App() {
     pendingRef.current = { requestId, threadId };
     setLiveText("");
     setGenerating(true);
-    void generate(requestId, [...context, { role: "user", content }]).then(reply => {
+    const projectContext = activeProject && inspected?.projectId === activeProject.id ? inspected.data.context : null;
+    void generate(requestId, [...context, { role: "user", content }], projectContext).then(reply => {
       if (reply.trim()) {
         const answer: ChatMessage = { id: newId(), role: "assistant", content: reply, createdAt: Date.now() };
         setWorkspace(s => record({ ...s, threads: s.threads.map(t => t.id === threadId
@@ -312,7 +421,7 @@ export default function App() {
         </div>)}
       </div>
       <div className="sidebar-footer">
-        <div className="sidebar-status"><span className="status-indicator"/><div><strong>{engine.running ? "CPU model ready" : "Model not loaded"}</strong><span>Offline coding · v0.2.1</span></div></div>
+        <div className="sidebar-status"><span className="status-indicator"/><div><strong>{engine.running ? "CPU model ready" : "Model not loaded"}</strong><span>Offline coding · v0.3.0</span></div></div>
         <button className="sidebar-settings" onClick={() => setSettingsOpen(true)}><Settings2 size={18}/> Settings <span>⌘,</span></button>
       </div>
     </aside>
@@ -330,20 +439,21 @@ export default function App() {
           <button className="icon-button" title="Settings" aria-label="Settings" onClick={() => setSettingsOpen(true)}><Settings2 size={19}/></button>
         </div>
       </header>
-      <div className="model-banner" role="status"><Info size={16}/><span><strong>{engine.running ? "Offline coding chat active:" : "Set up local coding:"}</strong> {engine.running ? "Responses run on your CPU; project file access and code execution are not yet enabled." : "Open Settings to download, select and load a small CPU-only coding model. Prompts are saved even while offline."}</span><button aria-label="Open model settings" onClick={() => setSettingsOpen(true)}>{engine.running ? "Model" : "Set up"} <ArrowRight size={14}/></button></div>
+      <div className="model-banner" role="status"><Info size={16}/><span><strong>{engine.running ? "Offline coding chat active:" : "Set up local coding:"}</strong> {engine.running ? "Responses run on your CPU. Choose Inspect project to supply source context; file changes require approval." : "Open Settings to download, select and load a small CPU-only coding model. Prompts are saved even while offline."}</span><button aria-label="Open model settings" onClick={() => setSettingsOpen(true)}>{engine.running ? "Model" : "Set up"} <ArrowRight size={14}/></button></div>
       <div className="conversation-scroll" ref={scrollRef}>
         {activeThread && activeThread.messages.length > 0 ? <div className="conversation-body">
           <div className="conversation-intro"><div className="conversation-kicker"><MessageSquare size={15}/> CONVERSATION</div><h1>{activeThread.title}</h1><p>Started {dateLabel(activeThread.createdAt)} · Saved only on this device</p></div>
           {activeThread.messages.map(message => <article key={message.id} className={`chat-message ${message.role}`}>
             <div className="message-avatar">{message.role === "user" ? "Y" : <Code2 size={16}/>}</div>
-            <div className="message-content"><div className="message-header"><strong>{message.role === "user" ? "You" : "LocalForge"}</strong><time>{timeLabel(message.createdAt)}</time></div><MessageBody content={message.content} isAssistant={message.role === "assistant"} /></div>
+            <div className="message-content"><div className="message-header"><strong>{message.role === "user" ? "You" : "LocalForge"}</strong><time>{timeLabel(message.createdAt)}</time></div><MessageBody content={message.content} isAssistant={message.role === "assistant"}
+              onPropose={message.role === "assistant" ? proposeCode : undefined} /></div>
           </article>)}
           {generating && pendingRef.current?.threadId === activeThread.id && <article className="chat-message assistant" aria-live="polite"><div className="message-avatar"><Code2 size={16}/></div><div className="message-content"><div className="message-header"><strong>LocalForge · generating</strong></div><MessageBody content={liveText || "Thinking on your CPU…"} isAssistant /></div></article>}
           {!engine.running && activeThread.messages.at(-1)?.role === "user" && <div className="offline-response"><Info size={17}/><div><strong>Prompt saved. No response generated.</strong><p>Open Settings, download a GGUF model and load it to enable real offline chat.</p></div></div>}
         </div> : <EmptyChat project={activeProject} onPrompt={prompt => { setDraft(prompt); textareaRef.current?.focus(); }}/>}</div>
       <div className="composer-area"><form onSubmit={onSubmit} className="composer">
         <textarea ref={textareaRef} rows={2} value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={onComposerKeyDown} placeholder="Describe what you'd like to build…" aria-label="Message" />
-        <div className="composer-bottom"><div className="composer-meta"><span><Code2 size={14}/> Coding workspace</span><span className="composer-separator">·</span><span>Local code chat · does not write files</span></div>
+        <div className="composer-bottom"><div className="composer-meta"><span><Code2 size={14}/> Coding workspace</span><span className="composer-separator">·</span><span>Project edits require approval</span></div>
           {generating ? <button type="button" className="send-button stop-button" onClick={() => void cancelGeneration()} title="Stop generation" aria-label="Stop generation"><StopCircle size={19}/></button> : <button type="submit" className="send-button" disabled={!draft.trim()} title={engine.running ? "Send prompt" : "Save prompt"} aria-label={engine.running ? "Send prompt" : "Save prompt"}><ArrowUp size={19}/></button>}
         </div>
       </form><div className="composer-caption">{engine.running ? "Enter to send · Shift+Enter for a new line · CPU only" : "Enter to save · Shift+Enter for a new line · Load a model in Settings"}</div></div>
@@ -356,18 +466,46 @@ export default function App() {
           <div className="detail-section"><div className="detail-section-heading"><Activity size={17}/><h3>Session activity</h3></div><p className="detail-description">A transparent record of workspace actions. No simulated AI progress.</p></div>
           <div className="activity-list">{workspace.activity.length ? workspace.activity.map(e => <ActivityItem key={e.id} event={e}/>) : <div className="detail-empty"><History size={24}/><p>No activity yet</p><span>Actions you take will appear here.</span></div>}</div>
           <div className="detail-divider"/>
-          <div className="detail-section"><div className="detail-section-heading"><Terminal size={17}/><h3>Build & tests</h3></div><div className="pending-card"><div className="pending-label">NOT AVAILABLE IN V0.1</div><p>The model can generate code in chat, but it cannot write project files, inspect them or run tests yet.</p></div></div>
+          <div className="detail-section"><div className="detail-section-heading"><Terminal size={17}/><h3>Build & tests</h3></div><div className="pending-card"><div className="pending-label">TEST RUNNER COMING LATER</div><p>You can inspect local source files and approve individual edits with undo. Build/test command execution is not enabled yet.</p></div></div>
         </> : <>
           <div className="detail-section"><div className="detail-section-heading"><FolderOpen size={18}/><h3>Project overview</h3></div>
             {activeProject ? <><div className="project-facts"><span>Name</span><strong>{activeProject.name}</strong><span>Path</span><code title={activeProject.path}>{activeProject.path}</code><span>Added</span><strong>{dateLabel(activeProject.addedAt)}</strong><span>Conversations</span><strong>{workspace.threads.filter(t => t.projectId === activeProject.id).length}</strong></div>
-              <div className="project-privacy"><ShieldCheck size={16}/> The project is linked by path only. The coding model cannot read or change its files yet.</div>
+              <div className="project-privacy"><ShieldCheck size={16}/> Inspection is explicitly requested. Each code change shows its before/after preview and requires approval. No commands run automatically.</div>
+              <button type="button" className="model-action primary project-inspect" disabled={inspectBusy} onClick={() => void inspectCurrentProject()}>
+                <Eye size={15}/> {inspectBusy ? "Inspecting…" : "Inspect project (read-only)"}</button>
+              {inspected?.projectId === activeProject.id && <div className="project-file-browser">
+                <strong>{inspected.data.files.length} source files found {inspected.data.truncated ? "(list truncated)" : ""}</strong>
+                <small>Source excerpts will be sent to the local model with your next prompt. Sensitive, generated and binary files are excluded.</small>
+                {inspected.data.files.slice(0,75).map(file=><button key={file.path} type="button" title={file.path} onClick={()=>void viewFile(file.path)}><FileCode2 size={13}/>{file.path}</button>)}
+                {viewedFile && <div className="project-file-preview"><strong>{viewedFile.path} · Read only</strong><pre>{viewedFile.content.slice(0,4500)}</pre></div>}
+              </div>}
+              {lastEdit && lastEdit.root === activeProject.path && <button type="button" className="model-action secondary project-inspect" onClick={()=>void undoLast()}><RotateCcw size={15}/>Undo last change: {lastEdit.path}</button>}
               <button className="remove-project" onClick={() => removeProject(activeProject)}><Trash2 size={15}/> Remove from workspace</button>
             </> : <div className="detail-empty"><Folder size={24}/><p>No project selected</p><span>Add a project folder to associate conversations with real work.</span><button onClick={addProject}>Choose folder <ArrowRight size={14}/></button></div>}</div>
         </>}
       </div>
-      <div className="detail-footer"><div><span className="footer-small-dot"/> Local-first workspace</div><span>0.2.0</span></div>
+      <div className="detail-footer"><div><span className="footer-small-dot"/> Local-first workspace</div><span>0.3.0</span></div>
     </aside>}
     {(notice || storageWarning) && <div className="toast" role="alert"><Info size={17}/><span>{storageWarning ? "Local storage is unavailable or full. Changes may not survive restarting the app." : notice}</span><button aria-label="Dismiss notification" onClick={() => { setNotice(""); setStorageWarning(false); }}><X size={16}/></button></div>}
+    {proposal && <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setProposal(null);}}>
+      <section className="settings-modal proposal-modal" role="dialog" aria-modal="true" aria-label="Review proposed project change">
+        <div className="modal-heading"><div><span className="eyebrow">REVIEW BEFORE WRITING</span><h2>Propose file change</h2></div>
+          <button type="button" className="icon-button" aria-label="Close proposal" onClick={()=>setProposal(null)}><X size={20}/></button></div>
+        <div className="proposal-content">
+          <label htmlFor="proposal-path">Project-relative destination</label>
+          <input id="proposal-path" value={proposal.path} onChange={e=>setProposal({...proposal,path:e.target.value,original:null})}
+            placeholder="src/main.py" spellCheck={false}/>
+          <p>Changes are restricted to the selected project folder. Review the content and preview the actual existing file before approving.</p>
+          <button type="button" className="model-action secondary" disabled={proposalBusy} onClick={()=>void previewProposal()}><Eye size={15}/>{proposalBusy?"Reading existing file…":"Preview existing file and proposed code"}</button>
+          {proposal.original && <div className="proposal-preview">
+            <div><strong>{proposal.original.exists?"CURRENT FILE":"NEW FILE"}</strong><pre>{proposal.original.exists?proposal.original.content:"(File does not exist)"}</pre></div>
+            <div><strong>PROPOSED REPLACEMENT</strong><pre>{proposal.content}</pre></div>
+          </div>}
+          {!proposal.original && <div className="proposal-hint">No files have been changed. Preview the exact destination before applying.</div>}
+          <div className="proposal-actions"><button type="button" className="model-action secondary" onClick={()=>setProposal(null)}>Cancel</button>
+            <button type="button" className="model-action primary" disabled={!proposal.original || proposalBusy} onClick={()=>void approveProposal()}><ClipboardCheck size={15}/>Approve and write file</button></div>
+        </div>
+      </section></div>}
     {settingsOpen && <SettingsModal theme={workspace.theme} setTheme={theme => setWorkspace(s => ({ ...s, theme }))} onClose={() => setSettingsOpen(false)}
       engine={engine} model={model} progress={progress} downloading={downloading} modelBusy={modelBusy} modelPath={modelPath} threads={threads} setThreads={setThreads}
       download={() => void handleDownload()} load={() => void handleLoadModel()} unload={() => void handleUnloadModel()} choose={() => void handleChooseModel()}/>}

@@ -23,6 +23,8 @@ jobs:
       - run: npm run build
 
   desktop:
+    permissions:
+      contents: write # Only used on main to publish official versioned Releases.
     name: Package ${{ matrix.name }}
     needs: frontend
     strategy:
@@ -56,8 +58,24 @@ jobs:
       - name: Check Rust coding-prompt policy
         if: matrix.platform == 'ubuntu-22.04'
         run: cargo test --manifest-path src-tauri/Cargo.toml
-      - uses: tauri-apps/tauri-action@v1
+      - name: Package PR preview installers
+        if: github.event_name == 'pull_request'
+        uses: tauri-apps/tauri-action@v1
         with:
           args: --bundles ${{ matrix.bundle }}
           uploadWorkflowArtifacts: true
           workflowArtifactNamePattern: 'LocalForge-[platform]-[arch]-[bundle]'
+      - name: Package and publish official GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --bundles ${{ matrix.bundle }}
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: 'LocalForge-[platform]-[arch]-[bundle]'
+          tagName: v__VERSION__
+          releaseName: LocalForge v__VERSION__
+          releaseBody: 'LocalForge CPU-only desktop workspace. Installers are unsigned development releases. Download only from this official repository.'
+          releaseDraft: false
+          prerelease: false

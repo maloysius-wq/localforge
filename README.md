@@ -64,3 +64,19 @@ LocalForge: MIT; see [LICENSE](LICENSE). `llama.cpp` is third-party MIT-licensed
 
 ### v0.2.1 coding behavior update
 The recommended small model is instructed to **start coding immediately** when asked to create a program from scratch. Its response limit is now 1,536 tokens and the context window 4,096 tokens. Generated code appears in copyable chat blocks. It cannot save files or run tests yet. If a request is complex, ask for a small runnable initial implementation, then iterate in follow-up prompts. Hardware-level model response quality remains to be evaluated.
+
+## v0.3: quiet model startup, updates and approved project edits
+
+- On Windows, the bundled `llama-server` now launches with `CREATE_NO_WINDOW`. The native server still runs while loaded and its troubleshooting log remains in the app's log directory. The console is hidden, **not** killed before generation completes.
+- **Settings → Application updates → Check for updates** queries the official public GitHub Release API only when you click it. On Windows, when a newer official release contains an NSIS installer with GitHub's `sha256` asset digest, **Download and install update** downloads it, checks the full SHA-256 and size, starts the normal visible installer and exits LocalForge. It cannot install unverified assets, arbitrary URLs or GitHub Actions preview ZIPs. Other platforms get release information and an official release link. Installers remain unsigned, so publisher warnings can appear. GitHub Release packages are automatically published from successful `main` builds; PR builds remain ordinary preview artifacts.
+- Select a project, open the **Project** tab and click **Inspect project (read-only)**. LocalForge enumerates a bounded number of small source files, ignores common secrets/build folders and displays a browsable list. A short snapshot is attached to future questions in that project until you switch projects or refresh. No data is sent to an external model: the selected local GGUF handles the request.
+- Once the local model returns a fenced code block, click **Propose file change**. Select the relative filename, click **Preview existing file**, review current and proposed content side by side, then explicitly click **Approve and write file**. LocalForge saves a backup in its application data directory so **Undo last change** can restore the previous file even after restarting. An on-disk hash prevents writing when the file changed between preview and approval, and prevents an undo from overwriting subsequent edits.
+- No shell commands or tests are executed by this release. It does not claim that AI-authored code compiles or works. Project snapshotting is deliberately bounded, not a complete repository index or documentation retrieval service. No autonomous multi-file editing, background agents or external search yet.
+
+### Update caveat for existing v0.2.1 users
+
+The currently installed v0.2.1 doesn't have the update button. Install v0.3.0 **once** from the [official releases page](https://github.com/maloysius-wq/localforge/releases), after the new Windows build and release are verified. Subsequent releases can use the app's update check.
+
+### Backup and safety limits
+
+Source excerpts are read only after you explicitly inspect the selected folder. Backups are stored in LocalForge app data; only the most recent edit has a convenient one-click Undo shortcut, and undo refuses if the file changed after LocalForge applied it. Binary files, symlinked paths, known private/credential filenames, large files and paths escaping the chosen project are rejected. External code execution remains disabled. Keep Git or your own backups for important work.
