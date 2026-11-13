@@ -52,3 +52,38 @@
 .model-autoload span{display:flex;flex-direction:column;gap:5px}
 .model-autoload strong{font-size:12px}
 .model-autoload small{font-size:11px;color:var(--muted);line-height:1.5}
+
+
+/* Local token budget circle. Counts are supplied by llama.cpp, never from
+   a fabricated conversation-length percentage. */
+.composer-meta{flex-wrap:wrap;min-width:0}
+.context-ring-wrap{display:flex;align-items:center;gap:6px;padding:0 5px;border-radius:8px;white-space:nowrap;max-width:210px}
+.context-ring{width:46px;height:46px;flex-shrink:0;overflow:visible}
+.context-ring-track{stroke:var(--border)}
+.context-ring-fill{stroke:var(--accent);transition:stroke-dashoffset .3s ease}
+.context-ring-fill.near{stroke:#e8ad5d}
+.context-ring-fill.high{stroke:#e27575}
+.context-ring-percent{font-size:10px;font-weight:800;fill:var(--text)}
+.context-ring-copy{display:flex;flex-direction:column;gap:2px;min-width:0}
+.context-ring-copy strong{font-size:10px;color:var(--text)}
+.context-ring-copy small{font-size:10px;color:var(--muted)}
+/* Automatic model edits remain entirely staged until approved here. */
+.batch-review-modal{width:min(1100px,calc(100vw - 44px));max-width:1100px;max-height:min(92vh,900px);display:flex;flex-direction:column;overflow:hidden}
+.batch-review-intro{padding:0 24px 15px;color:var(--muted);font-size:12px;line-height:1.65}
+.batch-review-intro strong{color:var(--text)}
+.batch-review-files{padding:0 24px 16px;overflow:auto;min-height:0;flex:1}
+.batch-review-file{border:1px solid var(--border);border-radius:10px;margin:10px 0;overflow:hidden}
+.batch-review-file summary{display:flex;align-items:center;gap:9px;padding:12px 14px;cursor:pointer;background:var(--surface)}
+.batch-review-file summary strong{font-size:12px;color:var(--text);min-width:0;overflow-wrap:anywhere;flex:1}
+.batch-review-file summary span{font-size:11px;color:var(--muted)}
+.batch-review-file .proposal-preview{padding:10px;max-height:none;overflow:visible}
+.batch-review-file .proposal-preview>div{min-width:0;max-height:350px;overflow:auto}
+.batch-review-file .proposal-preview pre{font-size:11px;white-space:pre;overflow:auto;max-height:290px}
+.batch-review-actions{display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:15px 24px;border-top:1px solid var(--border);background:var(--surface)}
+.batch-review-actions button{display:inline-flex;align-items:center;gap:7px}
+@media (max-width:800px){
+  .context-ring-copy{display:none}
+  .composer-meta .composer-separator{display:none}
+  .batch-review-file .proposal-preview{display:block}
+  .batch-review-file .proposal-preview>div{margin-bottom:10px}
+}
