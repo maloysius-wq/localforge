@@ -27,7 +27,7 @@ def get_model() -> None:
     req = urllib.request.Request(MODEL_URL, method="HEAD", headers={"User-Agent": "LocalForge-CI"})
     with urllib.request.urlopen(req, timeout=90) as response:
         sha = response.headers.get("x-linked-etag", response.headers.get("etag", "")).strip('"').lower()
-        size = int(response.headers.get("x-linked-size", "0"))
+        size = int(response.headers.get("x-linked-size") or response.headers.get("content-length") or "0")
     if len(sha) != 64 or not all(c in "0123456789abcdef" for c in sha):
         raise RuntimeError("No trustworthy model checksum from source")
     if size < 500_000_000 or size > 2_000_000_000:
