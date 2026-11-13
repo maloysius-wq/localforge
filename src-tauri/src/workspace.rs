@@ -187,3 +187,166 @@ mod tests {
     }
     #[test] fn hash_is_stable() { assert_eq!(digest("a"),"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"); }
 }
+
+
+// A model may prepare multiple proposed full-file replacements, but it never
+// gains filesystem write privileges. Only one explicit UI approval invokes
+// this batch operation. Validate every change BEFORE writing any of them.
+#[derive(Deserialize)]
+#[serde(rename_all="camelCase")]
+pub struct BatchEdit {
+    pub path: String,
+    pub expected_sha: Option<String>,
+    pub content: String,
+}
+#[derive(Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct BatchApplied { pub token: String, pub paths: Vec<String> }
+#[derive(Serialize, Deserialize)]
+struct BatchEntry { path: String, before: Option<String>, after_sha: String }
+#[derive(Serialize, Deserialize)]
+struct BatchRecord { root: String, entries: Vec<BatchEntry> }
+
+fn prepare_batch(root: &Path, edits: &[BatchEdit]) -> Result<Vec<BatchEntry>,String> {
+    use std::collections::HashSet;
+    if edits.is_empty() || edits.len() > 8 { return Err("A change set must contain 1–8 source files".into()); }
+    let mut used = HashSet::new();
+    let mut entries = Vec::with_capacity(edits.len());
+    for edit in edits {
+        if edit.content.len() as u64 > MAX_FILE || edit.content.contains('\0') {
+            return Err(format!("{} exceeds the UTF-8 source file safety limits", edit.path));
+        }
+        let path = safe_path(root, &edit.path)?;
+        // Windows targets are case insensitive; do not apply the same file twice.
+        if !used.insert(path.to_string_lossy().to_lowercase()) {
+            return Err("The proposed change set contains duplicate filenames".into());
+        }
+        let before = text_file(&path)?;
+        if before.as_ref().map(|v|digest(v)) != edit.expected_sha {
+            return Err(format!("{} changed since the preview; review again before applying", edit.path));
+        }
+        entries.push(BatchEntry { path: edit.path.clone(), before, after_sha: digest(&edit.content) });
+    }
+    Ok(entries)
+}
+
+fn restore_entries(root: &Path, entries: &[BatchEntry]) -> Result<(),String> {
+    for entry in entries.iter().rev() {
+        let target = safe_path(root, &entry.path)?;
+        match &entry.before {
+            Some(before) => fs::write(&target, before).map_err(|e| format!("Could not restore {}: {e}", entry.path))?,
+            None if target.exists() => fs::remove_file(&target).map_err(|e| format!("Could not remove {}: {e}", entry.path))?,
+            None => (),
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn apply_project_changes(app: AppHandle, root: String, edits: Vec<BatchEdit>) -> Result<BatchApplied,String> {
+    let root = root_path(&root)?;
+    let entries = prepare_batch(&root, &edits)?;
+    let token = uuid::Uuid::new_v4().to_string();
+    let record_path = backup_path(&app, &token)?;
+    let record = BatchRecord { root: root.to_string_lossy().to_string(), entries };
+    // Persist an undo journal before making a change.
+    fs::write(&record_path, serde_json::to_vec(&record).map_err(|e|e.to_string())?)
+        .map_err(|e|format!("Cannot save undo journal: {e}"))?;
+    let mut written = 0usize;
+    let result = (|| -> Result<(),String> {
+        for (edit, saved) in edits.iter().zip(record.entries.iter()) {
+            let target = safe_path(&root, &edit.path)?;
+            if let Some(parent) = target.parent() { fs::create_dir_all(parent).map_err(|e|e.to_string())?; }
+            let verified = safe_path(&root, &edit.path)?;
+            if verified != target { return Err("Project path changed during approval".into()); }
+            // Recheck against the saved snapshot to avoid overwriting edits
+            // made while this approval is being processed.
+            let current = text_file(&verified)?;
+            if current.as_ref().map(|s|digest(s)) != saved.before.as_ref().map(|s|digest(s)) {
+                return Err(format!("{} changed while applying the batch", edit.path));
+            }
+            fs::write(&verified, &edit.content).map_err(|e| format!("Cannot update {}: {e}", edit.path))?;
+            written += 1;
+        }
+        Ok(())
+    })();
+    if let Err(err) = result {
+        if written == 0 {
+            let _ = fs::remove_file(&record_path);
+            return Err(err);
+        }
+        // Roll back only the files we successfully changed. A failed
+        // rollback leaves the journal for recovery and reports the failure.
+        let rollback = restore_entries(&root, &record.entries[..written]);
+        if let Err(rollback_error) = rollback {
+            return Err(format!("{err}. Automatic rollback also failed: {rollback_error}; undo journal {token} was retained"));
+        }
+        let _ = fs::remove_file(&record_path);
+        return Err(format!("{err}. Earlier edits were rolled back"));
+    }
+    Ok(BatchApplied { token, paths: edits.into_iter().map(|v|v.path).collect() })
+}
+
+#[tauri::command]
+pub fn undo_project_changes(app: AppHandle, root: String, token: String) -> Result<Vec<String>,String> {
+    let root = root_path(&root)?;
+    let record_path = backup_path(&app, &token)?;
+    let record: BatchRecord = serde_json::from_slice(&fs::read(&record_path)
+        .map_err(|e|format!("No saved batch undo record: {e}"))?).map_err(|e|e.to_string())?;
+    if record.root != root.to_string_lossy() { return Err("Undo belongs to another project".into()); }
+    // Verify ALL files have not been changed by the user after approval
+    // before restoring ANY of them.
+    for entry in &record.entries {
+        let target = safe_path(&root, &entry.path)?;
+        let current = text_file(&target)?;
+        if current.as_ref().map(|s|digest(s)) != Some(entry.after_sha.clone()) {
+            return Err(format!("{} changed after LocalForge wrote it. No files were undone", entry.path));
+        }
+    }
+    restore_entries(&root, &record.entries)?;
+    fs::remove_file(record_path).map_err(|e|e.to_string())?;
+    Ok(record.entries.into_iter().map(|e|e.path).collect())
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::*;
+    fn test_root() -> PathBuf {
+        let p = std::env::temp_dir().join(format!("localforge-batch-{}",uuid::Uuid::new_v4()));
+        fs::create_dir_all(&p).unwrap(); fs::canonicalize(p).unwrap()
+    }
+    #[test] fn stages_existing_and_new_files_without_writing_them() {
+        let root = test_root();
+        fs::write(root.join("index.html"), "old").unwrap();
+        let entries = prepare_batch(&root, &[
+            BatchEdit {path:"index.html".into(),expected_sha:Some(digest("old")),content:"new".into()},
+            BatchEdit {path:"script.js".into(),expected_sha:None,content:"const a=1".into()}
+        ]).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(fs::read_to_string(root.join("index.html")).unwrap(),"old");
+        assert!(!root.join("script.js").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test] fn stale_file_rejects_entire_batch() {
+        let root=test_root();
+        fs::write(root.join("index.html"), "unexpected").unwrap();
+        let err=prepare_batch(&root,&[
+            BatchEdit {path:"new.py".into(),expected_sha:None,content:"print(1)".into()},
+            BatchEdit {path:"index.html".into(),expected_sha:Some(digest("stale")),content:"new".into()}
+        ]).err().unwrap();
+        assert!(err.contains("changed since the preview"));
+        assert!(!root.join("new.py").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test] fn rejects_duplicate_traversal_and_secret_changes() {
+        let root=test_root();
+        for name in ["../outside.py",".env","a/.git/config"] {
+            assert!(prepare_batch(&root,&[BatchEdit {path:name.into(),expected_sha:None,content:"x".into()}]).is_err());
+        }
+        assert!(prepare_batch(&root,&[
+            BatchEdit {path:"index.html".into(),expected_sha:None,content:"x".into()},
+            BatchEdit {path:"INDEX.HTML".into(),expected_sha:None,content:"y".into()}
+        ]).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+}
