@@ -7,7 +7,7 @@ import {
   ChevronRight, Code2, FileCode2, Folder, FolderOpen,
   FolderPlus, HardDrive, History, Info, LayoutPanelLeft, Menu, MessageSquare,
   Moon, PanelRightClose, Plus, Settings2, ShieldCheck, Sparkles,
-  Sun, Terminal, Trash2, X, StopCircle, RefreshCw, RotateCcw, FilePlus2, Eye, ClipboardCheck,
+  Sun, Terminal, Trash2, X, StopCircle, RefreshCw, RotateCcw, Eye, ClipboardCheck,
 } from "lucide-react";
 import {
   loadWorkspace, newId, projectLabel, saveWorkspace, uniqueProject,
