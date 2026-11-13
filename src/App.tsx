@@ -432,12 +432,31 @@ export default function App() {
     }catch(e){setNotice(`Change not applied: ${String(e)}`);}
     finally{setProposalBusy(false);}
   }
+  async function approveBatch() {
+    if (!batchProposal || batchBusy) return;
+    setBatchBusy(true);
+    try {
+      const applied = await applyProjectChanges(batchProposal.root,
+        batchProposal.edits.map(edit => ({
+          path:edit.path,expectedSha:edit.original.sha256,content:edit.content
+        })));
+      const entry={root:batchProposal.root,token:applied.token,path:applied.paths.join(", "),paths:applied.paths};
+      setLastEdit(entry);
+      localStorage.setItem("localforge.last-edit.v1",JSON.stringify(entry));
+      setWorkspace(state => record(state,"Approved "+applied.paths.length+" file change(s): "+entry.path));
+      setBatchProposal(null);setInspected(null);setViewedFile(null);
+      setNotice("Wrote "+applied.paths.length+" project file(s). Undo last change restores the full batch.");
+    } catch(error) { setNotice("Could not apply the reviewed changes: "+String(error)); }
+    finally { setBatchBusy(false); }
+  }
+
   async function undoLast() {
     if(!lastEdit || !activeProject || lastEdit.root !== activeProject.path)return;
     if(!window.confirm(`Undo LocalForge's last change to ${lastEdit.path}? Undo will refuse if that file has changed since.`))return;
-    try{const path=await undoProjectChange(lastEdit.root,lastEdit.token);
+    try{const paths=lastEdit.paths ? await undoProjectChanges(lastEdit.root,lastEdit.token)
+      : [await undoProjectChange(lastEdit.root,lastEdit.token)];
       localStorage.removeItem("localforge.last-edit.v1");setLastEdit(null);setInspected(null);setViewedFile(null);
-      setWorkspace(state=>record(state,`Restored ${path} from undo snapshot`));setNotice(`Restored ${path}.`);
+      setWorkspace(state=>record(state,"Restored "+paths.length+" file(s) from undo snapshot"));setNotice("Restored "+paths.join(", "));
     }catch(e){setNotice(`Undo refused: ${String(e)}`);}
   }
 
