@@ -61,3 +61,6 @@ See [DEVELOPMENT_HANDOFF.md](DEVELOPMENT_HANDOFF.md) for the current technical s
 ## License
 
 LocalForge: MIT; see [LICENSE](LICENSE). `llama.cpp` is third-party MIT-licensed software ([source and terms](https://github.com/ggml-org/llama.cpp/blob/master/LICENSE)). Qwen model weights are distributed under their own model license at the linked Hugging Face repository.
+
+### v0.2.1 coding behavior update
+The recommended small model is instructed to **start coding immediately** when asked to create a program from scratch. Its response limit is now 1,536 tokens and the context window 4,096 tokens. Generated code appears in copyable chat blocks. It cannot save files or run tests yet. If a request is complex, ask for a small runnable initial implementation, then iterate in follow-up prompts. Hardware-level model response quality remains to be evaluated.

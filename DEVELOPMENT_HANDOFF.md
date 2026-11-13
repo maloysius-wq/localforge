@@ -41,3 +41,9 @@ A pleasant GUI-first, offline CPU-only software-building workspace for older Win
 - `src-tauri/tauri.conf.json`: bundle runtime folder in installers.
 - `scripts/prepare_runtime.py`: pinned archive verification and extraction.
 - `.github/workflows/build.yml`: checks/package artifacts.
+
+## v0.2.1 coding-response quality patch
+- A new-project request now receives task-oriented system instructions to deliver working code, assume an empty project, and avoid asking for starter files. Existing-project modifications still must not pretend to inspect files.
+- Generation budget expanded to 1,536 tokens, server context to 4,096; old history trimmed to protect output room. Small-model quality is not guaranteed without hardware-level evaluation.
+- Safe code-fence presentation and a Copy code action; still **chat code only**, no file editing or tests.
+- Automated tests verify instructions/prompt construction and code-block rendering, not model intelligence. First manual validation: new conversation prompt: “Build a Python GUI for a game collection”; confirm a filename, runnable tkinter code and run steps appear, not a request for initial code.
