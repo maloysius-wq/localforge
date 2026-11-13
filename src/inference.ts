@@ -15,7 +15,7 @@ export const getModelInfo = () => invoke<ModelInfo>("model_info");
 export const downloadModel = () => invoke<ModelInfo>("download_model");
 export const startModel = (modelPath: string | null, threads: number) => invoke<EngineStatus>("start_model", { modelPath, threads });
 export const stopModel = () => invoke<EngineStatus>("stop_model");
-export const generate = (requestId: string, messages: GenerationMessage[]) => invoke<string>("generate", { requestId, messages });
+export const generate = (requestId: string, messages: GenerationMessage[], projectContext: string | null = null) => invoke<string>("generate", { requestId, messages, projectContext });
 export const cancelGeneration = () => invoke<void>("cancel_generation");
 export const onToken = (handler: (value: TokenEvent) => void) => listen<TokenEvent>("model-token", e => handler(e.payload));
 export const onDownload = (handler: (value: DownloadProgress) => void) => listen<DownloadProgress>("model-download", e => handler(e.payload));
