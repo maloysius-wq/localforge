@@ -4,15 +4,21 @@ import { isTauri } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   Activity, ArrowRight, ArrowUp, BookOpen, CheckCircle2, ChevronDown,
-  ChevronRight, Code2, Cpu, FileCode2, Folder, FolderOpen,
+  ChevronRight, Code2, FileCode2, Folder, FolderOpen,
   FolderPlus, HardDrive, History, Info, LayoutPanelLeft, Menu, MessageSquare,
   Moon, PanelRightClose, Plus, Settings2, ShieldCheck, Sparkles,
-  Sun, Terminal, Trash2, X,
+  Sun, Terminal, Trash2, X, StopCircle,
 } from "lucide-react";
 import {
   loadWorkspace, newId, projectLabel, saveWorkspace, uniqueProject,
   type ChatMessage, type EventLog, type Project, type Thread, type WorkspaceState,
 } from "./storage";
+import { ModelManager } from "./ModelManager";
+import {
+  type DownloadProgress, type EngineStatus, type ModelInfo, emptyStatus, emptyModel,
+  getStatus, getModelInfo, downloadModel, startModel, stopModel,
+  cancelGeneration, generate, onToken, onDownload,
+} from "./inference";
 
 type Tab = "activity" | "project";
 const SUGGESTIONS = [
@@ -48,10 +54,22 @@ function EmptyChat({ onPrompt, project }: { onPrompt: (prompt: string) => void; 
   </section>;
 }
 
-function SettingsModal({ theme, setTheme, onClose }: {
+function SettingsModal({ theme, setTheme, onClose, engine, model, progress, downloading, modelBusy, modelPath, threads, setThreads, download, load, unload, choose }: {
   theme: WorkspaceState["theme"];
   setTheme: (theme: WorkspaceState["theme"]) => void;
   onClose: () => void;
+  engine: EngineStatus;
+  model: ModelInfo;
+  progress: DownloadProgress | null;
+  downloading: boolean;
+  modelBusy: boolean;
+  modelPath: string | null;
+  threads: number;
+  setThreads: (threads: number) => void;
+  download: () => void;
+  load: () => void;
+  unload: () => void;
+  choose: () => void;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { closeRef.current?.focus(); }, []);
@@ -66,14 +84,13 @@ function SettingsModal({ theme, setTheme, onClose }: {
           <button className={`theme-option ${theme === "light" ? "selected" : ""}`} onClick={() => setTheme("light")}><Sun size={19}/> Light {theme === "light" && <CheckCircle2 size={17}/>}</button>
         </div>
       </div>
-      <div className="settings-section"><h3>Local inference</h3><p>The coding model is not bundled in v0.1. Model downloading, CPU-only inference and live chat streaming are planned for v0.2.</p>
-        <div className="setting-summary"><Cpu size={18}/><div><strong>CPU-only by design</strong><span>No GPU or cloud account required in the planned engine.</span></div><span className="pill neutral">Planned</span></div>
-        <div className="setting-summary"><HardDrive size={18}/><div><strong>Local model management</strong><span>Download, load and switch quantized models from the UI.</span></div><span className="pill neutral">Planned</span></div>
+      <div className="settings-section"><h3>Local inference</h3><p>Download or select a GGUF model, then load it into memory. LocalForge bundles the CPU-only runtime with its installer.</p>
+        <ModelManager engine={engine} model={model} progress={progress} downloading={downloading} busy={modelBusy} modelPath={modelPath} threads={threads} setThreads={setThreads} onDownload={download} onLoad={load} onUnload={unload} onChoose={choose}/>
       </div>
       <div className="settings-section"><h3>Privacy and safety</h3>
-        <div className="setting-summary"><ShieldCheck size={18}/><div><strong>Your data stays on this computer</strong><span>Conversations and project references are saved locally. No telemetry, cloud sync, code execution or project file access.</span></div></div>
+        <div className="setting-summary"><ShieldCheck size={18}/><div><strong>Your data stays on this computer</strong><span>Conversations and project references stay on this computer. Model download reaches Hugging Face only when you request it. Chat inference runs on localhost. No code execution or project file access.</span></div></div>
       </div>
-      <div className="settings-footer">LocalForge 0.1.0 · Desktop shell preview</div>
+      <div className="settings-footer">LocalForge 0.2.0 · CPU coding chat</div>
     </section>
   </div>;
 }
@@ -88,6 +105,16 @@ export default function App() {
   const [notice, setNotice] = useState("");
   const [storageWarning, setStorageWarning] = useState(false);
   const [addingProject, setAddingProject] = useState(false);
+  const [engine, setEngine] = useState<EngineStatus>(emptyStatus);
+  const [model, setModel] = useState<ModelInfo>(emptyModel);
+  const [progress, setProgress] = useState<DownloadProgress | null>(null);
+  const [downloading, setDownloading] = useState(false);
+  const [modelBusy, setModelBusy] = useState(false);
+  const [modelPath, setModelPath] = useState<string | null>(null);
+  const [threads, setThreads] = useState(2);
+  const [generating, setGenerating] = useState(false);
+  const [liveText, setLiveText] = useState("");
+  const pendingRef = useRef<{ requestId: string; threadId: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const activeThread = workspace.threads.find(t => t.id === workspace.activeThreadId) || null;
@@ -102,7 +129,7 @@ export default function App() {
   }, [workspace]);
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [activeThread?.messages.length, activeThread?.id]);
+  }, [activeThread?.messages.length, activeThread?.id, liveText]);
   useEffect(() => {
     function keydown(e: globalThis.KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") { e.preventDefault(); createChat(); }
@@ -113,6 +140,55 @@ export default function App() {
     return () => window.removeEventListener("keydown", keydown);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspace.activeProjectId]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let disposed = false;
+    const unsubscribe: Array<() => void> = [];
+    void getStatus().then(value => { if (!disposed) setEngine(value); }).catch(error => { if (!disposed) setNotice(String(error)); });
+    void getModelInfo().then(value => { if (!disposed) setModel(value); }).catch(() => {});
+    void onToken(token => {
+      if (pendingRef.current?.requestId === token.requestId) setLiveText(text => text + token.delta);
+    }).then(off => { if (disposed) off(); else unsubscribe.push(off); });
+    void onDownload(value => { if (!disposed) setProgress(value); }).then(off => { if (disposed) off(); else unsubscribe.push(off); });
+    return () => { disposed = true; unsubscribe.forEach(off => off()); };
+  }, []);
+
+  async function handleDownload() {
+    setDownloading(true);
+    setProgress(null);
+    try {
+      const info = await downloadModel();
+      setModel(info);
+      setModelPath(null);
+      setNotice("Model verified and downloaded. Select Load model to start chatting offline.");
+    } catch (error) { setNotice(`Model download failed: ${String(error)}`); }
+    finally { setDownloading(false); }
+  }
+  async function handleChooseModel() {
+    try {
+      const path = await open({ title: "Choose a GGUF model file", directory: false, multiple: false,
+        filters: [{ name: "GGUF model", extensions: ["gguf"] }] });
+      if (typeof path === "string") setModelPath(path);
+    } catch (error) { setNotice(`File picker failed: ${String(error)}`); }
+  }
+  async function handleLoadModel() {
+    setModelBusy(true);
+    try {
+      setEngine(await startModel(modelPath, threads));
+      setNotice("CPU coding model loaded. Chat responses are now generated locally.");
+    } catch (error) { setNotice(`Could not load model: ${String(error)}`); }
+    finally {
+      setModelBusy(false);
+      void getStatus().then(setEngine).catch(() => {});
+    }
+  }
+  async function handleUnloadModel() {
+    setModelBusy(true);
+    try { setEngine(await stopModel()); }
+    catch (error) { setNotice(`Could not unload model: ${String(error)}`); }
+    finally { setModelBusy(false); }
+  }
 
   function record(state: WorkspaceState, message: string): WorkspaceState {
     const event: EventLog = { id: newId(), message, at: Date.now() };
@@ -165,19 +241,34 @@ export default function App() {
   }
   function submitPrompt(text: string) {
     const content = text.trim();
-    if (!content) return;
+    if (!content || generating) return;
     const now = Date.now();
     const message: ChatMessage = { id: newId(), role: "user", content, createdAt: now };
+    const current = workspace.threads.find(t => t.id === workspace.activeThreadId);
+    const threadId = current?.id || newId();
+    const context = (current?.messages ?? []).slice(-10).map(m => ({ role: m.role === "user" ? "user" as const : "assistant" as const, content: m.content }));
     setWorkspace(s => {
-      const id = s.activeThreadId && s.threads.some(t => t.id === s.activeThreadId) ? s.activeThreadId : newId();
-      const exists = s.threads.some(t => t.id === id);
-      const threads = exists ? s.threads.map(t => t.id === id
+      const exists = s.threads.some(t => t.id === threadId);
+      const threads = exists ? s.threads.map(t => t.id === threadId
         ? { ...t, title: t.messages.length === 0 ? shortTitle(content) : t.title, updatedAt: now, messages: [...t.messages, message] }
         : t)
-        : [{ id, projectId: s.activeProjectId, title: shortTitle(content), messages: [message], createdAt: now, updatedAt: now }, ...s.threads];
-      return record({ ...s, threads, activeThreadId: id }, "Prompt saved locally (model not connected)");
+        : [{ id: threadId, projectId: s.activeProjectId, title: shortTitle(content), messages: [message], createdAt: now, updatedAt: now }, ...s.threads];
+      return record({ ...s, threads, activeThreadId: threadId }, engine.running ? "Prompt sent to local model" : "Prompt saved locally (model offline)");
     });
     setDraft("");
+    if (!engine.running) return;
+    const requestId = newId();
+    pendingRef.current = { requestId, threadId };
+    setLiveText("");
+    setGenerating(true);
+    void generate(requestId, [...context, { role: "user", content }]).then(reply => {
+      if (reply.trim()) {
+        const answer: ChatMessage = { id: newId(), role: "assistant", content: reply, createdAt: Date.now() };
+        setWorkspace(s => record({ ...s, threads: s.threads.map(t => t.id === threadId
+          ? { ...t, messages: [...t.messages, answer], updatedAt: Date.now() } : t) }, "Local model response received"));
+      } else setNotice("The local model returned no text. Try again or unload and reload it.");
+    }).catch(error => { setNotice(`Generation failed: ${String(error)}`); })
+      .finally(() => { pendingRef.current = null; setLiveText(""); setGenerating(false); });
   }
   function onSubmit(e: FormEvent) { e.preventDefault(); submitPrompt(draft); }
   function onComposerKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -204,7 +295,7 @@ export default function App() {
         </div>)}
       </div>
       <div className="sidebar-footer">
-        <div className="sidebar-status"><span className="status-indicator"/><div><strong>Model not connected</strong><span>Workspace shell · v0.1</span></div></div>
+        <div className="sidebar-status"><span className="status-indicator"/><div><strong>{engine.running ? "CPU model ready" : "Model not loaded"}</strong><span>Offline coding · v0.2</span></div></div>
         <button className="sidebar-settings" onClick={() => setSettingsOpen(true)}><Settings2 size={18}/> Settings <span>⌘,</span></button>
       </div>
     </aside>
@@ -217,12 +308,12 @@ export default function App() {
           <strong className="topbar-title">{activeProject?.name || "Scratchpad"}</strong>
           <ChevronDown size={15} className="muted-chevron"/>
         </div>
-        <div className="top-actions"><span className="engine-pill"><span/> Engine offline</span>
+        <div className="top-actions"><span className={`engine-pill ${engine.running ? "ready" : ""}`}><span/> {engine.running ? "CPU model ready" : "Engine offline"}</span>
           <button className={`icon-button ${detailsOpen ? "toggled" : ""}`} title={detailsOpen ? "Hide details" : "Show details"} aria-label={detailsOpen ? "Hide details" : "Show details"} onClick={() => setDetailsOpen(!detailsOpen)}><PanelRightClose size={19}/></button>
           <button className="icon-button" title="Settings" aria-label="Settings" onClick={() => setSettingsOpen(true)}><Settings2 size={19}/></button>
         </div>
       </header>
-      <div className="model-banner" role="status"><Info size={16}/><span><strong>Foundation build:</strong> Conversations are saved locally. AI responses and code tools will arrive with the inference integration.</span><button aria-label="Open model settings" onClick={() => setSettingsOpen(true)}>Details <ArrowRight size={14}/></button></div>
+      <div className="model-banner" role="status"><Info size={16}/><span><strong>{engine.running ? "Offline coding chat active:" : "Set up local coding:"}</strong> {engine.running ? "Responses run on your CPU; project file access and code execution are not yet enabled." : "Open Settings to download, select and load a small CPU-only coding model. Prompts are saved even while offline."}</span><button aria-label="Open model settings" onClick={() => setSettingsOpen(true)}>{engine.running ? "Model" : "Set up"} <ArrowRight size={14}/></button></div>
       <div className="conversation-scroll" ref={scrollRef}>
         {activeThread && activeThread.messages.length > 0 ? <div className="conversation-body">
           <div className="conversation-intro"><div className="conversation-kicker"><MessageSquare size={15}/> CONVERSATION</div><h1>{activeThread.title}</h1><p>Started {dateLabel(activeThread.createdAt)} · Saved only on this device</p></div>
@@ -230,14 +321,15 @@ export default function App() {
             <div className="message-avatar">{message.role === "user" ? "Y" : <Code2 size={16}/>}</div>
             <div className="message-content"><div className="message-header"><strong>{message.role === "user" ? "You" : "LocalForge"}</strong><time>{timeLabel(message.createdAt)}</time></div><div className="message-text">{message.content}</div></div>
           </article>)}
-          <div className="offline-response"><Info size={17}/><div><strong>Prompt saved. No response generated.</strong><p>LocalForge does not have an inference engine yet. This first build saves your notes and conversations without pretending to run a model.</p></div></div>
+          {generating && pendingRef.current?.threadId === activeThread.id && <article className="chat-message assistant" aria-live="polite"><div className="message-avatar"><Code2 size={16}/></div><div className="message-content"><div className="message-header"><strong>LocalForge · generating</strong></div><div className="message-text">{liveText || "Thinking on your CPU…"}</div></div></article>}
+          {!engine.running && activeThread.messages.at(-1)?.role === "user" && <div className="offline-response"><Info size={17}/><div><strong>Prompt saved. No response generated.</strong><p>Open Settings, download a GGUF model and load it to enable real offline chat.</p></div></div>}
         </div> : <EmptyChat project={activeProject} onPrompt={prompt => { setDraft(prompt); textareaRef.current?.focus(); }}/>}</div>
       <div className="composer-area"><form onSubmit={onSubmit} className="composer">
         <textarea ref={textareaRef} rows={2} value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={onComposerKeyDown} placeholder="Describe what you'd like to build…" aria-label="Message" />
         <div className="composer-bottom"><div className="composer-meta"><span><Code2 size={14}/> Coding workspace</span><span className="composer-separator">·</span><span>Local only</span></div>
-          <button type="submit" className="send-button" disabled={!draft.trim()} title="Save prompt" aria-label="Save prompt"><ArrowUp size={19}/></button>
+          {generating ? <button type="button" className="send-button stop-button" onClick={() => void cancelGeneration()} title="Stop generation" aria-label="Stop generation"><StopCircle size={19}/></button> : <button type="submit" className="send-button" disabled={!draft.trim()} title={engine.running ? "Send prompt" : "Save prompt"} aria-label={engine.running ? "Send prompt" : "Save prompt"}><ArrowUp size={19}/></button>}
         </div>
-      </form><div className="composer-caption">Enter to save · Shift+Enter for a new line · No model connected yet</div></div>
+      </form><div className="composer-caption">{engine.running ? "Enter to send · Shift+Enter for a new line · CPU only" : "Enter to save · Shift+Enter for a new line · Load a model in Settings"}</div></div>
     </main>
 
     {detailsOpen && <aside className="details-pane" aria-label="Workspace details">
@@ -247,19 +339,21 @@ export default function App() {
           <div className="detail-section"><div className="detail-section-heading"><Activity size={17}/><h3>Session activity</h3></div><p className="detail-description">A transparent record of workspace actions. No simulated AI progress.</p></div>
           <div className="activity-list">{workspace.activity.length ? workspace.activity.map(e => <ActivityItem key={e.id} event={e}/>) : <div className="detail-empty"><History size={24}/><p>No activity yet</p><span>Actions you take will appear here.</span></div>}</div>
           <div className="detail-divider"/>
-          <div className="detail-section"><div className="detail-section-heading"><Terminal size={17}/><h3>Build & tests</h3></div><div className="pending-card"><div className="pending-label">NOT AVAILABLE IN V0.1</div><p>When code tools arrive, command output, test results and changed files will appear here.</p></div></div>
+          <div className="detail-section"><div className="detail-section-heading"><Terminal size={17}/><h3>Build & tests</h3></div><div className="pending-card"><div className="pending-label">NOT AVAILABLE IN V0.1</div><p>The model can chat about code, but it cannot run tools, inspect files or report verified test outcomes yet.</p></div></div>
         </> : <>
           <div className="detail-section"><div className="detail-section-heading"><FolderOpen size={18}/><h3>Project overview</h3></div>
             {activeProject ? <><div className="project-facts"><span>Name</span><strong>{activeProject.name}</strong><span>Path</span><code title={activeProject.path}>{activeProject.path}</code><span>Added</span><strong>{dateLabel(activeProject.addedAt)}</strong><span>Conversations</span><strong>{workspace.threads.filter(t => t.projectId === activeProject.id).length}</strong></div>
-              <div className="project-privacy"><ShieldCheck size={16}/> The project is linked by path. LocalForge does not read or change files in v0.1.</div>
+              <div className="project-privacy"><ShieldCheck size={16}/> The project is linked by path only. The coding model cannot read or change its files yet.</div>
               <button className="remove-project" onClick={() => removeProject(activeProject)}><Trash2 size={15}/> Remove from workspace</button>
             </> : <div className="detail-empty"><Folder size={24}/><p>No project selected</p><span>Add a project folder to associate conversations with real work.</span><button onClick={addProject}>Choose folder <ArrowRight size={14}/></button></div>}</div>
         </>}
       </div>
-      <div className="detail-footer"><div><span className="footer-small-dot"/> Local-first workspace</div><span>0.1.0</span></div>
+      <div className="detail-footer"><div><span className="footer-small-dot"/> Local-first workspace</div><span>0.2.0</span></div>
     </aside>}
     {(notice || storageWarning) && <div className="toast" role="alert"><Info size={17}/><span>{storageWarning ? "Local storage is unavailable or full. Changes may not survive restarting the app." : notice}</span><button aria-label="Dismiss notification" onClick={() => { setNotice(""); setStorageWarning(false); }}><X size={16}/></button></div>}
-    {settingsOpen && <SettingsModal theme={workspace.theme} setTheme={theme => setWorkspace(s => ({ ...s, theme }))} onClose={() => setSettingsOpen(false)}/>}
+    {settingsOpen && <SettingsModal theme={workspace.theme} setTheme={theme => setWorkspace(s => ({ ...s, theme }))} onClose={() => setSettingsOpen(false)}
+      engine={engine} model={model} progress={progress} downloading={downloading} modelBusy={modelBusy} modelPath={modelPath} threads={threads} setThreads={setThreads}
+      download={() => void handleDownload()} load={() => void handleLoadModel()} unload={() => void handleUnloadModel()} choose={() => void handleChooseModel()}/>}
     <div className="mobile-block"><div className="welcome-mark"><Code2 size={30}/></div><h2>LocalForge</h2><p>This desktop workspace is designed for wider screens. Please resize your window.</p></div>
   </div>;
 }
