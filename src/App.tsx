@@ -188,6 +188,7 @@ export default function App() {
   const [lastEdit, setLastEdit] = useState<{ root: string; token: string; path: string } | null>(() => {
     try { const value = localStorage.getItem("localforge.last-edit.v1"); return value ? JSON.parse(value) : null; } catch {return null;}
   });
+  const canceledRef = useRef(false);
   const pendingRef = useRef<{ requestId: string; threadId: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -384,6 +385,7 @@ export default function App() {
     setDraft("");
     if (!engine.running) return;
     const requestId = newId();
+    canceledRef.current = false;
     pendingRef.current = { requestId, threadId };
     setLiveText("");
     setGenerating(true);
@@ -393,10 +395,14 @@ export default function App() {
       try {
         const codeMessages = task ? [{ role: "user" as const, content: task.request }] : [...context, { role: "user" as const, content }];
         let reply = await generate(requestId, codeMessages, projectContext, !!task);
-        if (task && !containsImplementation(reply, task.target)) {
+        if (task && !canceledRef.current && !containsImplementation(reply, task.target)) {
           setNotice("Local model returned no source code. Retrying once with a code-first request…");
           setLiveText("");
           reply = await generate(requestId, [{ role: "user", content: retryForActualCode(task) }], projectContext, true);
+        }
+        if (canceledRef.current) {
+          setNotice("Generation stopped. No partial file was saved.");
+          return;
         }
         if (reply.trim()) {
           const validated = !task || containsImplementation(reply, task.target);
@@ -471,7 +477,7 @@ export default function App() {
       <div className="composer-area"><form onSubmit={onSubmit} className="composer">
         <textarea ref={textareaRef} rows={2} value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={onComposerKeyDown} placeholder="Describe what you'd like to build…" aria-label="Message" />
         <div className="composer-bottom"><div className="composer-meta"><span><Code2 size={14}/> Coding workspace</span><span className="composer-separator">·</span><span>Project edits require approval</span></div>
-          {generating ? <button type="button" className="send-button stop-button" onClick={() => void cancelGeneration()} title="Stop generation" aria-label="Stop generation"><StopCircle size={19}/></button> : <button type="submit" className="send-button" disabled={!draft.trim()} title={engine.running ? "Send prompt" : "Save prompt"} aria-label={engine.running ? "Send prompt" : "Save prompt"}><ArrowUp size={19}/></button>}
+          {generating ? <button type="button" className="send-button stop-button" onClick={() => { canceledRef.current = true; void cancelGeneration(); }} title="Stop generation" aria-label="Stop generation"><StopCircle size={19}/></button> : <button type="submit" className="send-button" disabled={!draft.trim()} title={engine.running ? "Send prompt" : "Save prompt"} aria-label={engine.running ? "Send prompt" : "Save prompt"}><ArrowUp size={19}/></button>}
         </div>
       </form><div className="composer-caption">{engine.running ? "Enter to send · Shift+Enter for a new line · CPU only" : "Enter to save · Shift+Enter for a new line · Load a model in Settings"}</div></div>
     </main>
