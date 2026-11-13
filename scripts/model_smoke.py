@@ -111,6 +111,29 @@ def main() -> None:
             "Provide working code in chat as a proposed implementation. Do not claim to have already saved or executed files.")
         output = []
         system = code_system_prompt()
+        # Match the native context meter's pipeline exactly.
+        chat = [{"role": "system", "content": system}, {"role": "user", "content": context}]
+        template = request_json(base + "/apply-template", {"messages": chat})
+        prompt = template.get("prompt")
+        if not isinstance(prompt, str) or not prompt:
+            raise AssertionError("Pinned llama.cpp /apply-template did not produce a chat prompt")
+        tokens = request_json(base + "/tokenize", {
+            "content": prompt, "add_special": False, "parse_special": True
+        }).get("tokens")
+        if not isinstance(tokens, list) or not 20 < len(tokens) < 6144:
+            raise AssertionError("Pinned llama.cpp context tokenizer produced invalid prompt token count")
+        print("Measured prompt tokens with pinned model tokenizer:", len(tokens), flush=True)
+        stream_args = {
+            "messages": chat, "stream": True, "stream_options": {"include_usage": True},
+            "max_tokens": 16, "temperature": 0.1,
+        }
+        req = urllib.request.Request(base + "/v1/chat/completions",
+            json.dumps(stream_args).encode(), headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=120) as streaming:
+            data_lines = [line.decode("utf8").strip() for line in streaming if line.startswith(b"data: ")]
+        if not any("choices" in line for line in data_lines):
+            raise AssertionError("Streaming completion with usage option returned no model deltas")
+        print("Pinned model supports chat streaming with usage option", flush=True)
         for attempt in range(2):
             prompt = context if attempt == 0 else (
                 "IMPLEMENT THE SOFTWARE. OUTPUT SOURCE CODE, NOT A DESCRIPTION.\n\n" + context
