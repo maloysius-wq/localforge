@@ -265,7 +265,30 @@ pub fn apply_project_changes(app: AppHandle, root: String, edits: Vec<BatchEdit>
             if current.as_ref().map(|s|digest(s)) != saved.before.as_ref().map(|s|digest(s)) {
                 return Err(format!("{} changed while applying the batch", edit.path));
             }
-            fs::write(&verified, &edit.content).map_err(|e| format!("Cannot update {}: {e}", edit.path))?;
+            // Stage the complete UTF-8 replacement in the same directory,
+            // then rename it over the target. A failed write cannot leave a
+            // partially written target file behind.
+            let staging = verified.with_file_name(format!(".localforge-stage-{}.tmp", uuid::Uuid::new_v4()));
+            let staged = (|| -> Result<(),String> {
+                use std::io::Write;
+                let mut handle = fs::OpenOptions::new().write(true).create_new(true)
+                    .open(&staging).map_err(|e|format!("Cannot stage {}: {e}", edit.path))?;
+                handle.write_all(edit.content.as_bytes()).map_err(|e|format!("Cannot stage {}: {e}", edit.path))?;
+                handle.sync_all().map_err(|e|format!("Cannot sync {}: {e}", edit.path))?;
+                drop(handle);
+                if verified.exists() {
+                    let permissions = fs::metadata(&verified).map_err(|e|e.to_string())?.permissions();
+                    fs::set_permissions(&staging, permissions).map_err(|e|e.to_string())?;
+                }
+                // A final check catches symlink/junction changes after staging.
+                if safe_path(&root, &edit.path)? != verified {
+                    return Err("Project path changed during staging".into());
+                }
+                fs::rename(&staging, &verified).map_err(|e|format!("Cannot replace {}: {e}", edit.path))?;
+                Ok(())
+            })();
+            if staged.is_err() { let _ = fs::remove_file(&staging); }
+            staged?;
             written += 1;
         }
         Ok(())
