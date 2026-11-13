@@ -18,14 +18,16 @@ import { ModelManager } from "./ModelManager";
 import { splitCodeBlocks } from "./codeBlocks";
 import { containsImplementation, retryForActualCode } from "./codeTasks";
 import { prepareGeneration } from "./conversationContext";
-import { DEFAULT_CONTEXT_TOKENS, validContextTokens } from "./contextConfig";
-import { inspectProject, readProjectFile, applyProjectChange, undoProjectChange, suggestFilename,
+import { ContextRing } from "./ContextRing";
+import { extractProposedFiles } from "./autoEdits";
+import { DEFAULT_CONTEXT_TOKENS, validContextTokens, contextBudget } from "./contextConfig";
+import { inspectProject, readProjectFile, applyProjectChange, undoProjectChange, applyProjectChanges, undoProjectChanges, suggestFilename,
   type ProjectSnapshot, type ProjectFile } from "./projectTools";
 import { checkForUpdates, installUpdate, onUpdateProgress, type UpdateInfo } from "./updates";
 import {
   type DownloadProgress, type EngineStatus, type ModelInfo, emptyStatus, emptyModel,
   getStatus, getModelInfo, downloadModel, startModel, stopModel,
-  cancelGeneration, generate, onToken, onDownload,
+  cancelGeneration, generate, onToken, onDownload, onContextUsage,
 } from "./inference";
 
 type Tab = "activity" | "project";
@@ -163,7 +165,7 @@ function SettingsModal({ theme, setTheme, onClose, engine, model, progress, down
       <div className="settings-section"><h3>Privacy and safety</h3>
         <div className="setting-summary"><ShieldCheck size={18}/><div><strong>Your data stays on this computer</strong><span>Chats stay local. Your selected project can be inspected on request and edited only after approving each proposed file change. No shell execution. Update checks reach the official GitHub API on request.</span></div></div>
       </div>
-      <div className="settings-footer">LocalForge 0.3.5 · CPU coding workspace</div>
+      <div className="settings-footer">LocalForge 0.3.6 · CPU coding workspace</div>
     </section>
   </div>;
 }
@@ -204,7 +206,12 @@ export default function App() {
   const [viewedFile, setViewedFile] = useState<ProjectFile | null>(null);
   const [proposal, setProposal] = useState<{ projectId: string; root: string; path: string; content: string; original: ProjectFile | null } | null>(null);
   const [proposalBusy, setProposalBusy] = useState(false);
-  const [lastEdit, setLastEdit] = useState<{ root: string; token: string; path: string } | null>(() => {
+  const [batchProposal, setBatchProposal] = useState<{projectId:string;root:string;edits:{path:string;content:string;original:ProjectFile}[]} | null>(null);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [contextMeters, setContextMeters] = useState<Record<string,{used:number;max:number;kind:"prompt"|"total"}>>(() => {
+    try { return JSON.parse(localStorage.getItem("localforge.context-meter.v1") || "{}"); } catch { return {}; }
+  });
+  const [lastEdit, setLastEdit] = useState<{ root: string; token: string; path: string; paths?: string[] } | null>(() => {
     try { const value = localStorage.getItem("localforge.last-edit.v1"); return value ? JSON.parse(value) : null; } catch {return null;}
   });
   const canceledRef = useRef(false);
@@ -223,6 +230,9 @@ export default function App() {
     localStorage.setItem("localforge.context-tokens.v1", String(contextTokens));
     localStorage.setItem("localforge.auto-load.v1", String(autoLoad));
   }, [modelPath, threads, contextTokens, autoLoad]);
+  useEffect(() => {
+    try { localStorage.setItem("localforge.context-meter.v1", JSON.stringify(contextMeters)); } catch { /* Graceful when storage quota is full. */ }
+  }, [contextMeters]);
   useEffect(() => {
     document.documentElement.dataset.theme = workspace.theme;
     if (!saveWorkspace(workspace)) setStorageWarning(true);
@@ -269,6 +279,10 @@ export default function App() {
       if (pendingRef.current?.requestId === token.requestId) setLiveText(text => text + token.delta);
     }).then(off => { if (disposed) off(); else unsubscribe.push(off); });
     void onDownload(value => { if (!disposed) setProgress(value); }).then(off => { if (disposed) off(); else unsubscribe.push(off); });
+    void onContextUsage(value => {
+      const threadId = pendingRef.current?.requestId === value.requestId ? pendingRef.current.threadId : null;
+      if (!disposed && threadId) setContextMeters(old => ({...old,[threadId]:{used:value.usedTokens,max:value.maxTokens,kind:value.kind}}));
+    }).then(off => { if (disposed) off(); else unsubscribe.push(off); });
     return () => { disposed = true; unsubscribe.forEach(off => off()); };
   }, []);
 
@@ -504,7 +518,7 @@ export default function App() {
         </div>)}
       </div>
       <div className="sidebar-footer">
-        <div className="sidebar-status"><span className="status-indicator"/><div><strong>{engine.running ? "CPU model ready" : "Model not loaded"}</strong><span>Offline coding · v0.3.5</span></div></div>
+        <div className="sidebar-status"><span className="status-indicator"/><div><strong>{engine.running ? "CPU model ready" : "Model not loaded"}</strong><span>Offline coding · v0.3.6</span></div></div>
         <button className="sidebar-settings" onClick={() => setSettingsOpen(true)}><Settings2 size={18}/> Settings <span>⌘,</span></button>
       </div>
     </aside>
@@ -567,7 +581,7 @@ export default function App() {
             </> : <div className="detail-empty"><Folder size={24}/><p>No project selected</p><span>Add a project folder to associate conversations with real work.</span><button onClick={addProject}>Choose folder <ArrowRight size={14}/></button></div>}</div>
         </>}
       </div>
-      <div className="detail-footer"><div><span className="footer-small-dot"/> Local-first workspace</div><span>0.3.5</span></div>
+      <div className="detail-footer"><div><span className="footer-small-dot"/> Local-first workspace</div><span>0.3.6</span></div>
     </aside>}
     {(notice || storageWarning) && <div className="toast" role="alert"><Info size={17}/><span>{storageWarning ? "Local storage is unavailable or full. Changes may not survive restarting the app." : notice}</span><button aria-label="Dismiss notification" onClick={() => { setNotice(""); setStorageWarning(false); }}><X size={16}/></button></div>}
     {proposal && <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setProposal(null);}}>
