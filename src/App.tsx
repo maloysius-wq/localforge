@@ -216,6 +216,7 @@ export default function App() {
   });
   const canceledRef = useRef(false);
   const pendingRef = useRef<{ requestId: string; threadId: string } | null>(null);
+  const activeProjectIdRef = useRef<string | null>(workspace.activeProjectId);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const activeThread = workspace.threads.find(t => t.id === workspace.activeThreadId) || null;
@@ -233,6 +234,7 @@ export default function App() {
   useEffect(() => {
     try { localStorage.setItem("localforge.context-meter.v1", JSON.stringify(contextMeters)); } catch { /* Graceful when storage quota is full. */ }
   }, [contextMeters]);
+  useEffect(() => { activeProjectIdRef.current = workspace.activeProjectId; }, [workspace.activeProjectId]);
   useEffect(() => {
     document.documentElement.dataset.theme = workspace.theme;
     if (!saveWorkspace(workspace)) setStorageWarning(true);
@@ -434,6 +436,10 @@ export default function App() {
   }
   async function approveBatch() {
     if (!batchProposal || batchBusy) return;
+    if (activeProjectIdRef.current !== batchProposal.projectId) {
+      setNotice("The selected project changed. Select the original project to approve this batch.");
+      return;
+    }
     setBatchBusy(true);
     try {
       const applied = await applyProjectChanges(batchProposal.root,
@@ -530,6 +536,10 @@ export default function App() {
             validated ? "Local model response received" : "Local model returned no complete implementation"));
           if (!validated) setNotice("Model did not produce usable code after two attempts. Try a smaller task or a stronger GGUF model.");
           else if (task && activeProject) {
+            if (activeProjectIdRef.current !== activeProject.id) {
+              setNotice("The active project changed while generating. No file changes were staged.");
+              return;
+            }
             if (candidates.error) setNotice(candidates.error);
             else if (candidates.files.length) {
               try {
@@ -648,7 +658,7 @@ export default function App() {
         <div className="modal-heading"><div><span className="eyebrow">ONE APPROVAL TO WRITE FILES</span>
           <h2 id="batch-review-title">Review {batchProposal.edits.length} proposed file {batchProposal.edits.length===1?"change":"changes"}</h2></div>
           <button type="button" className="icon-button" aria-label="Discard proposed changes" disabled={batchBusy} onClick={()=>setBatchProposal(null)}><X size={20}/></button></div>
-        <p className="batch-review-intro">LocalForge prepared these edits for your selected project. <strong>No files have been written yet.</strong> Inspect the before and after contents, then click Approve changes once to apply the complete batch.</p>
+        <p className="batch-review-intro">LocalForge prepared these edits under <code>{batchProposal.root}</code>. <strong>No files have been written yet.</strong> Inspect the before and after contents, then click Approve changes once to apply the complete batch.</p>
         <div className="batch-review-files">
           {batchProposal.edits.map((edit,index)=><details key={edit.path} open={index===0} className="batch-review-file">
             <summary><FileCode2 size={15}/><strong>{edit.path}</strong><span>{edit.original.exists?"Replace existing":"Create new"}</span></summary>
