@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 from pathlib import Path
 import re
 import socket
@@ -110,6 +111,7 @@ def main() -> None:
             "Please turn New Text Document.txt into a basic Minesweeper game, contained in a single HTML file.\n\n"
             "Provide working code in chat as a proposed implementation. Do not claim to have already saved or executed files.")
         output = []
+        first_reply = ""
         system = code_system_prompt()
         # Match the native context meter's pipeline exactly.
         chat = [{"role": "system", "content": system}, {"role": "user", "content": context}]
@@ -152,6 +154,7 @@ def main() -> None:
             output.append("ATTEMPT " + str(attempt + 1) + " FINISH " + str(finish) + "\n" + content)
             print("Reply:", len(content), "chars; finish:", finish, "complete HTML:", is_complete_html(content), flush=True)
             if is_complete_html(content):
+                first_reply = content
                 break
         OUTPUT.write_text("\n\n".join(output))
         if not is_complete_html(output[-1]):
@@ -160,6 +163,68 @@ def main() -> None:
             if not is_complete_html(last):
                 raise AssertionError("Real 1.5B model did not emit complete HTML after 2 tries. Check smoke output artifact.")
         print("Real model emitted a complete HTML document with embedded script and style.", flush=True)
+        # Functional browser results are explicitly quality METRICS, not a CI
+        # release gate. Preserve both first-attempt and repaired outcomes.
+        def extract_html(text: str) -> str:
+            fenced = re.search(r"```(?:html)?\s*\n([\s\S]*?)\n```", text, re.I)
+            data = fenced.group(1) if fenced else text
+            low = data.lower()
+            start = low.find("<!doctype html")
+            if start < 0:
+                start = low.find("<html")
+            end = low.rfind("</html>")
+            return data[start:end + len("</html>")] if start >= 0 and end > start else ""
+
+        candidate_path = ROOT / "localforge-smoke-candidate.html"
+        model_trials = []
+        final_reply = first_reply
+        for revision in range(3):
+            html = extract_html(final_reply)
+            if not html:
+                model_trials.append({"revision": revision, "html": False, "browser_pass": False})
+                break
+            candidate_path.write_text(html, encoding="utf-8")
+            browser = subprocess.run(
+                ["node", "scripts/web_acceptance.mjs", "--candidate", str(candidate_path)],
+                cwd=ROOT, capture_output=True, text=True, timeout=100, check=False
+            )
+            if browser.returncode != 0:
+                raise RuntimeError("Browser test runner failed: " + browser.stderr[-1800:])
+            data = json.loads((ROOT / "web-quality-artifacts/model-browser-report.json").read_text())
+            result = data["result"]
+            model_trials.append({
+                "revision": revision,
+                "html": True,
+                "browser_pass": result["passed"],
+                "checks": result["checks"],
+                "generated_chars": len(html)
+            })
+            print("Minesweeper browser acceptance attempt", revision, "PASS" if result["passed"] else "FAIL", flush=True)
+            if result["passed"] or revision == 2:
+                break
+            failures = [c["id"] + ": " + c["detail"] for c in result["checks"] if not c["passed"]]
+            repair_prompt = (
+                "Repair this existing single-file HTML Minesweeper game. Return the COMPLETE corrected "
+                "standalone HTML/CSS/JavaScript file, not an explanation. Keep a 9x9 board with visible "
+                "clickable tiles, no game-over at startup, functional clicks, flags, restart and timer.\n"
+                "Browser acceptance failures:\n" + "\n".join(failures) + "\n"
+                "Previous source:\n" + html[:7300]
+            )
+            repaired = request_json(base + "/v1/chat/completions", {
+                "model": "localforge-smoke",
+                "messages": [{"role": "system", "content": system},
+                             {"role": "user", "content": repair_prompt}],
+                "stream": False, "max_tokens": 3072, "temperature": 0.1
+            }, timeout=800)
+            final_reply = repaired["choices"][0]["message"].get("content") or ""
+            output.append("REPAIR " + str(revision+1) + "\n" + final_reply)
+            OUTPUT.write_text("\n\n".join(output), encoding="utf-8")
+        (ROOT / "web-quality-artifacts/model-repair-metrics.json").write_text(
+            json.dumps({"model": "Qwen2.5-Coder-1.5B-Instruct Q4_K_M",
+                        "runs": model_trials,
+                        "first_pass": bool(model_trials and model_trials[0].get("browser_pass")),
+                        "final_pass": bool(model_trials and model_trials[-1].get("browser_pass"))}, indent=2))
+        print("Real-model browser repair trials recorded:", len(model_trials), flush=True)
     finally:
         process.terminate()
         try:
