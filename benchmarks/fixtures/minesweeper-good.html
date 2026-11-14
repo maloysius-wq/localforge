@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Minesweeper quality fixture</title>
+<style>body{font:16px system-ui;background:#edf1f5;color:#202c3d;margin:24px}#game-board{display:grid;grid-template-columns:repeat(9,32px);gap:2px}.cell{height:32px;width:32px;background:#ccd4de;border:1px solid #a8b5c7;cursor:pointer}.cell.revealed{background:#f6f9ff}.cell.flagged{background:#f8cd76}#status{padding:10px 0}</style>
+</head><body>
+<h1>Minesweeper</h1><div id="status">Playing</div><p>Time: <span id="timer">0</span>s · Flags: <span id="flags">0</span></p>
+<button id="restart">Restart</button><div id="game-board" role="grid"></div>
+<script>
+const size=9, mineCount=10;
+const board=document.getElementById('game-board');
+const statusEl=document.getElementById('status');
+let mines=new Set(),revealed=new Set(),flagged=new Set(),first=true,over=false,seconds=0,timerHandle=null;
+function nearby(index) {
+  const x=index%size,y=Math.floor(index/size), result=[];
+  for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+    const nx=x+dx,ny=y+dy;
+    if((dx||dy) && nx>=0&&ny>=0&&nx<size&&ny<size)result.push(ny*size+nx);
+  }
+  return result;
+}
+function updateFlags(){document.getElementById('flags').textContent=String(flagged.size);}
+function startTimer(){
+  if(timerHandle!==null)clearInterval(timerHandle);
+  timerHandle=setInterval(()=>{seconds++;document.getElementById('timer').textContent=String(seconds);},1000);
+}
+function stopTimer(){if(timerHandle!==null)clearInterval(timerHandle);timerHandle=null;}
+function setMines(except){
+  while(mines.size<mineCount){
+    const candidate=Math.floor(Math.random()*size*size);
+    if(candidate!==except&&!nearby(except).includes(candidate))mines.add(candidate);
+  }
+}
+function cell(index){return board.querySelector('[data-index="'+index+'"]');}
+function finish(won){
+  over=true;stopTimer();statusEl.textContent=won?'You Win!':'Game Over';
+  if(!won){mines.forEach(i=>{if(!flagged.has(i))cell(i).textContent='💣';});}
+}
+function flood(start){
+  const queue=[start], visited=new Set();
+  while(queue.length){
+    const index=queue.pop();if(index===undefined||visited.has(index))continue;visited.add(index);
+    if(flagged.has(index)||mines.has(index)||revealed.has(index))continue;
+    revealed.add(index);const button=cell(index);
+    button.classList.add('revealed');const adjacent=nearby(index).filter(i=>mines.has(i)).length;
+    button.textContent=adjacent?String(adjacent):'';
+    if(adjacent===0)queue.push(...nearby(index));
+  }
+}
+function revealCell(index){
+  if(over||flagged.has(index)||revealed.has(index))return;
+  if(first){first=false;setMines(index);startTimer();}
+  if(mines.has(index)){cell(index).textContent='💣';finish(false);return;}
+  flood(index);if(revealed.size===size*size-mineCount)finish(true);
+}
+function toggleFlag(index){
+  if(over||revealed.has(index))return;
+  if(flagged.has(index))flagged.delete(index);else flagged.add(index);
+  const tile=cell(index);tile.classList.toggle('flagged',flagged.has(index));
+  tile.textContent=flagged.has(index)?'⚑':'';updateFlags();
+}
+function resetGame(){
+  stopTimer();mines.clear();revealed.clear();flagged.clear();first=true;over=false;seconds=0;
+  statusEl.textContent='Playing';document.getElementById('timer').textContent='0';updateFlags();
+  board.replaceChildren();
+  for(let i=0;i<size*size;i++){
+    const button=document.createElement('button');button.className='cell';button.dataset.index=String(i);
+    button.setAttribute('role','gridcell');button.setAttribute('aria-label','Hidden cell');
+    button.addEventListener('click',()=>revealCell(i));
+    button.addEventListener('contextmenu',event=>{event.preventDefault();toggleFlag(i);});
+    board.appendChild(button);
+  }
+}
+document.getElementById('restart').addEventListener('click',resetGame);
+resetGame();
+</script></body></html>

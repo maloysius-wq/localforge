@@ -1,0 +1,130 @@
+{
+  "suite": "localforge-web-python-baseline-v1",
+  "status": "task definitions; no model scores yet",
+  "policy": "Run exact same prompts, quantization, RAM hardware and acceptance tests per model. Record failures. Do not count source-format checks as functional passes.",
+  "tasks": [
+    {
+      "id": "web-minesweeper",
+      "kind": "html",
+      "prompt": "Build a complete standalone HTML Minesweeper game with a 9x9 board, 10 mines, flags, neighbor counts, restart button, first-click safety and timer.",
+      "criteria": [
+        "81 cells render",
+        "no defeat at startup",
+        "first click reveals a cell",
+        "right click toggles flag",
+        "restart resets board",
+        "timer advances",
+        "no JS runtime errors"
+      ],
+      "browser": true
+    },
+    {
+      "id": "web-calculator",
+      "kind": "html",
+      "prompt": "Create a single-file calculator supporting the four basic operations, decimal entry, clear, and keyboard input.",
+      "criteria": [
+        "buttons render",
+        "7+5=12",
+        "division by zero handled",
+        "clear resets"
+      ],
+      "browser": true
+    },
+    {
+      "id": "web-todo",
+      "kind": "html",
+      "prompt": "Build a local-only to-do list with add, complete and remove operations, saving state to localStorage.",
+      "criteria": [
+        "add item",
+        "complete toggles",
+        "delete removes",
+        "reloading retains"
+      ],
+      "browser": true
+    },
+    {
+      "id": "web-stopwatch",
+      "kind": "html",
+      "prompt": "Build a stopwatch with start, pause and reset and a display that advances over time.",
+      "criteria": [
+        "start increments",
+        "pause holds",
+        "reset zeros"
+      ],
+      "browser": true
+    },
+    {
+      "id": "web-memory",
+      "kind": "html",
+      "prompt": "Create a memory matching game with a grid of face-down pairs, matching and reset.",
+      "criteria": [
+        "tiles render",
+        "click reveals",
+        "matched pair remains visible",
+        "reset starts new game"
+      ],
+      "browser": true
+    },
+    {
+      "id": "web-form",
+      "kind": "html",
+      "prompt": "Build an offline contact form that validates required name, email syntax and displays errors without sending data.",
+      "criteria": [
+        "invalid submission rejected",
+        "valid input accepted",
+        "no network requests"
+      ],
+      "browser": true
+    },
+    {
+      "id": "python-calculator",
+      "kind": "python",
+      "prompt": "Write a Python command-line calculator with parseable operations and unit tests.",
+      "criteria": [
+        "syntax",
+        "addition",
+        "subtraction",
+        "multiply",
+        "division",
+        "divide-by-zero"
+      ],
+      "browser": false
+    },
+    {
+      "id": "python-csv",
+      "kind": "python",
+      "prompt": "Build a Python CSV expense aggregator by category with missing-file handling and unit tests.",
+      "criteria": [
+        "syntax",
+        "sample CSV totals",
+        "malformed input",
+        "missing file"
+      ],
+      "browser": false
+    },
+    {
+      "id": "python-text",
+      "kind": "python",
+      "prompt": "Write a Python text word-frequency tool that ignores punctuation and capitalization.",
+      "criteria": [
+        "syntax",
+        "empty input",
+        "case normalization",
+        "counts"
+      ],
+      "browser": false
+    },
+    {
+      "id": "python-json",
+      "kind": "python",
+      "prompt": "Create a Python JSON address-book utility with add, update, delete and invalid-file handling.",
+      "criteria": [
+        "syntax",
+        "roundtrip JSON",
+        "CRUD",
+        "corrupted input"
+      ],
+      "browser": false
+    }
+  ]
+}
