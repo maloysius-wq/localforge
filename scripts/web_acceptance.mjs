@@ -114,10 +114,13 @@ const mode=process.argv[2];
 if(mode==="--fixtures"){
   const good=await browserCheck("benchmarks/fixtures/minesweeper-good.html");
   const broken=await browserCheck("benchmarks/fixtures/minesweeper-broken.html");
-  const result={time:new Date().toISOString(),fixtures:{good,broken},checks:["good must pass","reported regression must fail"]};
+  const invisible=await browserCheck("benchmarks/fixtures/minesweeper-invisible.html");
+  const result={time:new Date().toISOString(),fixtures:{good,broken,invisible},checks:["good must pass","reported empty-board regression must fail","invisible tiles/undefined helper regression must fail"]};
   await writeFile(resolve(outputDir,"fixtures-report.json"),JSON.stringify(result,null,2));
-  console.log(JSON.stringify({good:good.passed,broken:broken.passed,goodChecks:good.checks,brokenFailures:broken.checks.filter(c=>!c.passed)},null,2));
-  if(!good.passed || broken.passed){
+  console.log(JSON.stringify({good:good.passed,broken:broken.passed,invisible:invisible.passed,
+    goodChecks:good.checks,brokenFailures:broken.checks.filter(c=>!c.passed),
+    invisibleFailures:invisible.checks.filter(c=>!c.passed)},null,2));
+  if(!good.passed || broken.passed || invisible.passed){
     console.error("Browser verifier failed its positive/negative control fixtures");
     process.exitCode=1;
   }
