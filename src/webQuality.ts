@@ -82,6 +82,25 @@ export function inspectWebSource(source: string, prompt: string): WebQualityRepo
     checks.push(condition("render-board", "Code creates visible board tiles",
       hasBoard && (actualTiles >= 9 || (createsTileElements && attachesElements) || generatesTileMarkup),
       "A board container alone is not enough. The game must create or insert clickable tile elements."));
+    const importantHelpers = ["updateBoard","renderBoard","drawBoard","resetBoard","renderGame","updateCells"];
+    const missingHelpers = importantHelpers.filter(name => {
+      const call = new RegExp("\\b" + name + "\\s*\\(").test(js);
+      const declared = new RegExp("(?:\\bfunction\\s+" + name + "\\b|\\b(?:const|let|var)\\s+" + name + "\\s*=|\\b" + name + "\\s*:\\s*function\\b)").test(js);
+      return call && !declared;
+    });
+    checks.push(condition("defined-helpers", "Referenced game helper functions exist",
+      missingHelpers.length === 0,
+      "Calls were found for missing helper functions: " + missingHelpers.join(", ")));
+    const usesIndexAsId = /getElementById\s*\(\s*(?:index|neighborIndex|cellIndex)\s*\)/i.test(js);
+    const assignsDynamicIds = /\.id\s*=|setAttribute\s*\(\s*["']id["']/i.test(js);
+    checks.push(condition("dom-cell-lookup", "Cell lookup matches assigned identifiers",
+      !usesIndexAsId || assignsDynamicIds,
+      "The game queries a cell by element ID but appears to assign only data-index attributes."));
+    const datasetIndexUnconverted = /\b(?:const|let|var)\s+\w+\s*=\s*(?:event|e)\.target\.dataset\.index\s*;/i.test(js)
+      && /\b(?:mines|minePositions)\.includes\s*\(\s*(?:index|cellIndex)\s*\)/i.test(js);
+    checks.push(condition("numeric-cell-index", "Cell indices have consistent numeric types",
+      !datasetIndexUnconverted,
+      "dataset.index returns a string, but mine positions appear to be numbers. Convert the index to Number."));
     checks.push(condition("cell-clicks", "Cell click event is connected", has(js, /addEventListener\s*\(\s*["']click["']|\.onclick\s*=|onmousedown\s*=|addEventListener\s*\(\s*["']pointerdown["']/i)
       || has(source, /\bonclick\s*=/i),
       "No event handler connects a player click to the game."));
