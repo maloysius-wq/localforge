@@ -20,6 +20,8 @@ async function browserCheck(path){
   const browser=await chromium.launch({headless:true,args:["--no-sandbox","--disable-background-networking","--disable-extensions","--no-first-run"]});
   const context=await browser.newContext({javaScriptEnabled:true,serviceWorkers:"block",acceptDownloads:false});
   const page=await context.newPage();
+  context.on("page",popup=>{if(popup!==page)void popup.close().catch(()=>{});});
+  if(typeof page.routeWebSocket==="function")await page.routeWebSocket("**/*",socket=>socket.close());
   const errors=[];
   page.on("pageerror",error=>errors.push(String(error).slice(0,300)));
   page.on("console",msg=>{if(msg.type()==="error")errors.push(msg.text().slice(0,300));});
