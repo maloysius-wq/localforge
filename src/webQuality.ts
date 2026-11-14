@@ -71,7 +71,12 @@ export function inspectWebSource(source: string, prompt: string): WebQualityRepo
     checks.push(condition("self-contained", "No required external script or stylesheet", !external,
       "A single-file app must not rely on another script or stylesheet."));
   }
-  if (isMinesweeperTask(prompt)) {
+  // A user may simply say "Fix index.html" in an existing Minesweeper project.
+  // Recognize the active game from its code as well as from the request text.
+  const looksLikeMinesweeper = isMinesweeperTask(prompt)
+    || /<(?:title|h1)[^>]*>\s*minesweeper\s*<\/(?:title|h1)>/i.test(source)
+    || /\b(?:mineCount|minefield|flaggedCells|revealSurroundingCells)\b/.test(js);
+  if (looksLikeMinesweeper) {
     const hasBoard = has(source, /(?:id|class)\s*=\s*["'][^"']*(?:game-board|minefield|board|grid)[^"']*["']/i)
       || has(js, /\bcreateElement\s*\(\s*["'](?:div|button|table)["']\s*\)/i);
     const actualTiles = [...source.matchAll(/<(?:div|button|td)\b[^>]*(?:class|data-cell|role)\s*=\s*["'][^"']*(?:cell|tile|gridcell)[^"']*["']/gi)].length;
