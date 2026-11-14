@@ -528,7 +528,7 @@ export default function App() {
           reply = await generate(requestId, [{ role: "user", content: retryForActualCode(task) + "\n\n" + codeMessages[0].content.slice(-4600) }], projectContext, true);
         }
         const verification = task?.target === "html" && !canceledRef.current
-          ? await verifyAndRepairWeb(reply,content,
+          ? await verifyAndRepairWeb(reply,task!.originalRequest + "\n" + content,
               async (repairRequest,round) => {
                 setNotice("Source checks found defects. Attempting repair " + round + "/2 with the local model…");
                 setLiveText("");
