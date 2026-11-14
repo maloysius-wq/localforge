@@ -5,6 +5,10 @@ on:
     paths:
       - 'src-tauri/src/lib.rs'
       - 'src/codeTasks.ts'
+      - 'src/webQuality.ts'
+      - 'src/verificationFlow.ts'
+      - 'scripts/web_acceptance.mjs'
+      - 'benchmarks/**'
       - 'scripts/model_smoke.py'
       - '.github/workflows/model-smoke.yml'
   workflow_dispatch:
@@ -16,9 +20,16 @@ jobs:
   model-smoke:
     name: Generate one-file HTML with CPU Qwen model
     runs-on: ubuntu-latest
-    timeout-minutes: 22
+    timeout-minutes: 38
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install browser test harness
+        run: npm install --no-audit --no-fund
+      - name: Prepare isolated Chromium for browser quality measurement
+        run: npx playwright install --with-deps chromium
       - name: Prepare pinned and verified CPU-only runtime
         run: python scripts/prepare_runtime.py
       - name: Run real model inference and inspect response
@@ -32,4 +43,5 @@ jobs:
           path: |
             localforge-model-smoke-output.txt
             smoke-llama.log
+            web-quality-artifacts/
           retention-days: 5
