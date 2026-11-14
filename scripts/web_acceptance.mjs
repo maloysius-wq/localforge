@@ -22,7 +22,8 @@ async function browserCheck(path){
   const page=await context.newPage();
   context.on("page",popup=>{if(popup!==page)void popup.close().catch(()=>{});});
   if(typeof page.routeWebSocket==="function")await page.routeWebSocket("**/*",socket=>socket.close());
-  const errors=[];
+  const errors=[],alerts=[];
+  page.on("dialog",dialog=>{alerts.push(dialog.message());void dialog.dismiss().catch(()=>{});});
   page.on("pageerror",error=>errors.push(String(error).slice(0,300)));
   page.on("console",msg=>{if(msg.type()==="error")errors.push(msg.text().slice(0,300));});
   await page.route("**/*",async route=>{
@@ -43,9 +44,17 @@ async function browserCheck(path){
       const count=await page.locator(selector).count();
       if(count>=9){tileSelector=selector;tiles=count;break;}
     }
-    checks.push(check("tiles-render",tiles>=9,"Playable tile elements found: "+tiles));
+    checks.push(check("tiles-render",tiles>=9,"Tile DOM nodes found: "+tiles));
+    const visible=tileSelector ? await page.locator(tileSelector).evaluateAll(nodes=>
+      nodes.filter(node=>{
+        const rect=node.getBoundingClientRect();
+        const styles=getComputedStyle(node);
+        return rect.width>=8 && rect.height>=8 && styles.display!=="none"
+          && styles.visibility!=="hidden";
+      }).length) : 0;
+    checks.push(check("tiles-visible",visible>=9,"Tiles with visible dimensions: "+visible));
     let firstClicked=false,flagged=false,timerAdvances=false,restartWorks=false;
-    if(tileSelector && tiles>=9 && checks[0].passed){
+    if(tileSelector && visible>=9 && checks[0].passed){
       const first=page.locator(tileSelector).first();
       const before=await first.evaluate(el=>({html:el.outerHTML,status:document.body.innerText}));
       await first.click({timeout:3000});
@@ -53,7 +62,8 @@ async function browserCheck(path){
       const after=await page.locator(tileSelector).first().evaluate(el=>({html:el.outerHTML,status:document.body.innerText}));
       firstClicked=before.html!==after.html || await page.locator(tileSelector+".revealed").count()>0;
       // Losing on the very first move is a poor default for a new game.
-      const gameLost=/\b(game over|you lose|you lost|defeat)\b/i.test(after.status);
+      const gameLost=/\b(game over|you lose|you lost|defeat)\b/i.test(after.status)
+        || alerts.some(message=>/game over|you lose|you lost|defeat/i.test(message));
       checks.push(check("first-click",firstClicked&&!gameLost,
         firstClicked?(gameLost?"First click caused immediate defeat":"First click changed visible cell state"):
           "Click did not change tile state"));
@@ -75,9 +85,9 @@ async function browserCheck(path){
       }
       checks.push(check("timer",timerAdvances,timerAdvances?"Timer advanced":"Timer did not advance after a safe first click"));
     }else{
-      checks.push(check("first-click",false,"No interactive tiles were rendered"));
-      checks.push(check("right-click-flag",false,"No interactive tiles were rendered"));
-      checks.push(check("timer",false,"Cannot start a game without tiles"));
+      checks.push(check("first-click",false,visible<9?"Tile elements have zero/hidden dimensions":"Game was already over before the first click"));
+      checks.push(check("right-click-flag",false,"No visible playable tile was available"));
+      checks.push(check("timer",false,"Cannot start the game without visible interactive tiles"));
     }
     const buttons=page.getByRole("button",{name:/^(restart|reset|new game|play again)$/i});
     if(await buttons.count()){
@@ -93,7 +103,11 @@ async function browserCheck(path){
     try{await page.screenshot({path:resolve(outputDir,basename(full)+".png"),fullPage:true,timeout:8000});}catch{}
   }catch(error){
     checks.push(check("browser-load",false,String(error).slice(0,400)));
-  }finally{await browser.close();}
+  }finally{
+    if(!checks.some(c=>c.id==="javascript-errors"))
+      checks.push(check("javascript-errors",errors.length===0,errors.length?errors.join("; "):"No uncaught script errors"));
+    await browser.close();
+  }
   return {file:basename(full),scope:"headless-browser-ci",passed:checks.every(c=>c.passed),checks};
 }
 const mode=process.argv[2];
