@@ -31,6 +31,11 @@ describe("offline source verification", () => {
     expect(report.passed).toBe(true);
     expect(report.note).toContain("NOT been tested");
   });
+  it("does not accept createElement without attaching any cells to the board",()=>{
+    const source=sample.replace("document.getElementById('game-board').appendChild(cell);","void cell;");
+    const report=inspectWebSource(source,"Build HTML Minesweeper");
+    expect(report.checks.find(x=>x.id==="render-board")?.passed).toBe(false);
+  });
   it("detects broken JavaScript syntax even when markup is complete",()=>{
     const source=sample.replace("let flagged = false;", "let flagged = ;");
     const report=inspectWebSource(source,"Build HTML Minesweeper");
