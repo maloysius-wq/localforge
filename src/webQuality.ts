@@ -75,8 +75,12 @@ export function inspectWebSource(source: string, prompt: string): WebQualityRepo
     const hasBoard = has(source, /(?:id|class)\s*=\s*["'][^"']*(?:game-board|minefield|board|grid)[^"']*["']/i)
       || has(js, /\bcreateElement\s*\(\s*["'](?:div|button|table)["']\s*\)/i);
     const actualTiles = [...source.matchAll(/<(?:div|button|td)\b[^>]*(?:class|data-cell|role)\s*=\s*["'][^"']*(?:cell|tile|gridcell)[^"']*["']/gi)].length;
-    const canInsertTiles = has(js, /(?:createElement\s*\(|\.innerHTML\s*=|insertAdjacentHTML\s*\(|appendChild\s*\(|replaceChildren\s*\(|\.append\s*\()/i);
-    checks.push(condition("render-board", "Code creates visible board tiles", hasBoard && (actualTiles >= 9 || canInsertTiles),
+    const createsTileElements = has(js, /createElement\s*\(\s*["'](?:button|div|td)["']/i);
+    const attachesElements = has(js, /appendChild\s*\(|replaceChildren\s*\(|\.append\s*\(/i);
+    const generatesTileMarkup = has(js, /innerHTML\s*\+?=|insertAdjacentHTML\s*\(/i)
+      && has(js, /<button|<div|class.{0,50}(?:cell|tile)|gridcell/i);
+    checks.push(condition("render-board", "Code creates visible board tiles",
+      hasBoard && (actualTiles >= 9 || (createsTileElements && attachesElements) || generatesTileMarkup),
       "A board container alone is not enough. The game must create or insert clickable tile elements."));
     checks.push(condition("cell-clicks", "Cell click event is connected", has(js, /addEventListener\s*\(\s*["']click["']|\.onclick\s*=|onmousedown\s*=|addEventListener\s*\(\s*["']pointerdown["']/i)
       || has(source, /\bonclick\s*=/i),
