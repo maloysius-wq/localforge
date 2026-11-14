@@ -56,11 +56,12 @@ async function browserCheck(path){
         firstClicked?(gameLost?"First click caused immediate defeat":"First click changed visible cell state"):
           "Click did not change tile state"));
       if(!gameLost){
-        const last=page.locator(tileSelector).last();
+        const unrevealed=page.locator(tileSelector+":not(.revealed)");
+        const last=(await unrevealed.count())>0?unrevealed.last():page.locator(tileSelector).last();
         const beforeFlag=await last.evaluate(el=>el.outerHTML);
         await last.click({button:"right",timeout:3000});
         await page.waitForTimeout(80);
-        const afterFlag=await page.locator(tileSelector).last().evaluate(el=>el.outerHTML);
+        const afterFlag=await last.evaluate(el=>el.outerHTML);
         flagged=beforeFlag!==afterFlag || /flag|⚑|🚩/i.test(afterFlag);
         checks.push(check("right-click-flag",flagged,flagged?"Right-click changed flag tile":"Right-click did not mark a tile"));
       }else checks.push(check("right-click-flag",false,"First click ended the game before flag check"));
