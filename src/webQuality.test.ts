@@ -36,6 +36,15 @@ describe("offline source verification", () => {
     const report=inspectWebSource(source,"Build HTML Minesweeper");
     expect(report.checks.find(x=>x.id==="render-board")?.passed).toBe(false);
   });
+  it("rejects the real Qwen regression: undefined updateBoard and mismatched IDs",()=>{
+    const source=sample.replace("document.getElementById('game-board').appendChild(cell);",
+      "document.getElementById('game-board').appendChild(cell); updateBoard(); document.getElementById(index);")
+      .replace("const board = [];", "const mines=[0,1,2]; const index=event.target.dataset.index; if(mines.includes(index)) console.log('mine');");
+    const report=inspectWebSource(source,"Build HTML Minesweeper");
+    expect(report.checks.find(x=>x.id==="defined-helpers")?.passed).toBe(false);
+    expect(report.checks.find(x=>x.id==="dom-cell-lookup")?.passed).toBe(false);
+    expect(report.checks.find(x=>x.id==="numeric-cell-index")?.passed).toBe(false);
+  });
   it("detects broken JavaScript syntax even when markup is complete",()=>{
     const source=sample.replace("let flagged = false;", "let flagged = ;");
     const report=inspectWebSource(source,"Build HTML Minesweeper");
