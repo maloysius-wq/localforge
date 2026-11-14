@@ -45,6 +45,11 @@ describe("offline source verification", () => {
     expect(report.checks.find(x=>x.id==="dom-cell-lookup")?.passed).toBe(false);
     expect(report.checks.find(x=>x.id==="numeric-cell-index")?.passed).toBe(false);
   });
+  it("recognizes a broken Minesweeper from its source when the user only says Fix index.html",()=>{
+    const broken="<html><head><title>Minesweeper</title></head><body><div id='game-board'></div><script>const board=[];function start(){board.push({mine:true,revealed:false})} start()</script></body></html>";
+    const report=inspectWebSource(broken,"Fix index.html");
+    expect(report.checks.some(c=>c.id==="render-board" && !c.passed)).toBe(true);
+  });
   it("detects broken JavaScript syntax even when markup is complete",()=>{
     const source=sample.replace("let flagged = false;", "let flagged = ;");
     const report=inspectWebSource(source,"Build HTML Minesweeper");
