@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Broken Minesweeper regression</title>
+<style>#game-board{background:gray;width:290px;height:290px}</style></head>
+<body><h1>Minesweeper</h1><div id="game-board"></div><p id="status">Loading</p>
+<script>
+let board=[];let mines=[];
+function createBoard(){
+  board=[];mines=[];
+  for(let i=0;i<81;i++)board.push({mine:i<10,revealed:false,flags:false,adjacent:0});
+}
+function checkGameOver(){
+  for(const cell of board){if(cell.mine&&!cell.revealed)return true;}
+  return false;
+}
+function initGame(){createBoard();if(checkGameOver())document.getElementById('status').textContent='Game Over';}
+initGame();
+</script></body></html>

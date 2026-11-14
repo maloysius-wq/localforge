@@ -87,3 +87,20 @@
   .batch-review-file .proposal-preview{display:block}
   .batch-review-file .proposal-preview>div{margin-bottom:10px}
 }
+
+
+/* Local source-quality diagnostics. Do not imply a passing static check
+   establishes browser behavior or that generated code has been executed. */
+.web-verification{padding:10px 14px;margin-bottom:10px;border:1px solid var(--border);border-radius:11px;background:var(--surface);font-size:12px}
+.web-verification-title{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.web-verification-title strong{flex:1;min-width:160px}
+.web-verification-title span{color:var(--muted);font-size:11px}
+.web-verification.failed{border-color:#b76c69}
+.web-verification.repairing{border-color:#c8a562}
+.web-verification-details{margin:6px 0 0;color:var(--muted)}
+.web-verification-details summary{cursor:pointer;font-size:11px}
+.web-verification-details ul{list-style:none;padding:0;margin:7px 0;max-height:135px;overflow:auto}
+.web-verification-details li{padding:4px 0;line-height:1.5}
+.web-verification-details li span{display:inline-block;width:15px}
+.web-verification-details li strong{color:var(--text)}
+.web-verification-details small{font-size:10px}

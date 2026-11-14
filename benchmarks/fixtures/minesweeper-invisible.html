@@ -1,0 +1,24 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Invisible Qwen-style Minesweeper regression</title>
+<style>body{display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#eee}
+#game-board{display:grid;grid-template-columns:repeat(9,1fr);grid-template-rows:repeat(9,1fr);gap:5px;border:1px solid #ccc}
+.cell{width:100%;height:100%;background:white;cursor:pointer}</style></head>
+<body><div id="game-board"></div><script>
+const boardSize=9, mineCount=10, gameBoard=document.getElementById('game-board');
+let mines=[],flaggedCells=[];
+function createBoard(){
+  for(let i=0;i<boardSize*boardSize;i++){
+    const cell=document.createElement('div');cell.classList.add('cell');
+    cell.dataset.index=i;cell.addEventListener('click',revealCell);
+    cell.addEventListener('contextmenu',flagCell);gameBoard.appendChild(cell);
+  }
+  while(mines.length<mineCount){let n=Math.floor(Math.random()*81);if(!mines.includes(n))mines.push(n);}
+  updateBoard();
+}
+function revealCell(event){
+  const index=event.target.dataset.index;
+  if(mines.includes(index))alert('Game Over');
+  else document.getElementById(index).textContent='1';
+}
+function flagCell(event){event.preventDefault();flaggedCells.push(event.target.dataset.index);}
+createBoard();
+</script></body></html>
