@@ -4,6 +4,13 @@
 
 LocalForge is an open-source project toward a compact, shared coding model with Python, web, desktop, mobile, and eventually pixel-art specialties. The interface resembles a desktop coding agent, but the initial releases deliberately add capabilities one by one with clear status reporting and local privacy safeguards.
 
+## v0.3.10: first-pass-only code generation
+
+- Each user request now produces **one** local model completion. LocalForge no longer sends a follow-up prompt when the output has no code or when HTML static checks fail.
+- First response is preserved verbatim in chat (with a clearly labeled quality notice where needed); static source checks remain in place and can block automatic staging of defective HTML.
+- The model smoke test measures only original Minesweeper output and records one first-pass browser-acceptance report without repair prompts. Failed game behavior is a model-quality metric, not a false green claim or a CI infrastructure failure.
+- Project review, one-click approval, source hash safeguards, native SQLite, and undo are unchanged. Users can explicitly ask for another attempt or a fix in a new message.
+
 ## v0.3.9: choose a model and where it downloads
 
 - In Settings → Local inference, select one of three Q4_K_M model candidates: Qwen2.5-Coder-1.5B (Apache 2.0), Qwen2.5-Coder-3B (Qwen Research noncommercial), Qwen3-4B-Instruct-2507 (Apache 2.0 upstream, Unsloth's GGUF quantization).
