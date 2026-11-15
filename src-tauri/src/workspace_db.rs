@@ -81,13 +81,17 @@ fn db_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
-pub fn initialize_native_workspace(app: AppHandle, legacy_json: String) -> Result<String, String> {
-    import_or_load(&db_path(&app)?, &legacy_json)
+pub async fn initialize_native_workspace(app: AppHandle, legacy_json: String) -> Result<String, String> {
+    let path = db_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || import_or_load(&path, &legacy_json))
+        .await.map_err(|err| format!("Workspace initialization worker failed: {err}"))?
 }
 
 #[tauri::command]
-pub fn save_native_workspace(app: AppHandle, snapshot_json: String) -> Result<(), String> {
-    replace(&db_path(&app)?, &snapshot_json)
+pub async fn save_native_workspace(app: AppHandle, snapshot_json: String) -> Result<(), String> {
+    let path = db_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || replace(&path, &snapshot_json))
+        .await.map_err(|err| format!("Workspace save worker failed: {err}"))?
 }
 
 #[cfg(test)]
