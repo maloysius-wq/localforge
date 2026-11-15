@@ -4,6 +4,13 @@
 
 LocalForge is an open-source project toward a compact, shared coding model with Python, web, desktop, mobile, and eventually pixel-art specialties. The interface resembles a desktop coding agent, but the initial releases deliberately add capabilities one by one with clear status reporting and local privacy safeguards.
 
+## v0.3.8: native SQLite conversation storage
+
+- Desktop conversations, projects, and workspace settings are now stored in the native local `workspace.sqlite3` database (app data directory). No cloud service or user CLI is involved.
+- **One-way, non-destructive migration:** on first launch after upgrading, LocalForge imports its existing `localforge.workspace.v1` WebView snapshot into a SQLite transaction. The original localStorage value is left untouched as a recovery copy. Subsequent native launches read SQLite rather than overwriting it from stale browser data.
+- Startup refuses to open an empty workspace if initialization or validation fails. Failed saves are visible; sequential async writes prevent an older request from overwriting the newest snapshot. Browser preview still uses the original localStorage schema.
+- Migration and save-order unit tests are included. Windows/Linux packaging CI checks build success; a real OS upgrade smoke test remains necessary to establish persistence across installed versions.
+
 ## v0.2: CPU coding chat
 
 - Real desktop UI, project sidebar, conversation history, dark/light theme, native folder picker.
