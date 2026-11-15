@@ -1,4 +1,5 @@
 mod workspace;
+mod model_catalog;
 mod workspace_db;
 mod updates;
 use futures_util::StreamExt;
@@ -15,10 +16,7 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 
-const MODEL_NAME: &str = "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf";
-const MODEL_URL: &str = "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf";
 const MIN_MODEL_BYTES: u64 = 500_000_000;
-const MAX_MODEL_BYTES: u64 = 2_000_000_000;
 
 // Deliberately optimized for producing useful first implementations from vague requests.
 // Project-folder paths are not sent to the model and no filesystem tools exist yet.
@@ -152,9 +150,6 @@ impl Engine {
     }
 }
 
-fn model_path(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path().app_data_dir().map(|dir| dir.join("models").join(MODEL_NAME)).map_err(|e| e.to_string())
-}
 fn check_gguf(path: &Path) -> Result<u64, String> {
     let size = path.metadata().map_err(|e| format!("Cannot read model file: {e}"))?.len();
     if !(MIN_MODEL_BYTES..=10_000_000_000).contains(&size) {
@@ -166,10 +161,15 @@ fn check_gguf(path: &Path) -> Result<u64, String> {
     Ok(size)
 }
 #[tauri::command]
-fn model_info(app: AppHandle) -> Result<ModelInfo, String> {
-    let path = model_path(&app)?;
+fn model_info(app: AppHandle, model_id: Option<String>, download_dir: Option<String>) -> Result<ModelInfo, String> {
+    let spec = model_catalog::spec(model_id.as_deref())?;
+    let path = model_catalog::destination(&app, spec, download_dir.as_deref())?;
     let size = check_gguf(&path).unwrap_or(0);
-    Ok(ModelInfo { installed: size > 0, path: path.to_string_lossy().to_string(), size })
+    // A GGUF with the wrong size or a symlink to another file is not a verified catalog install.
+    let is_regular_file = std::fs::symlink_metadata(&path)
+        .map(|m| m.file_type().is_file()).unwrap_or(false);
+    Ok(ModelInfo { installed: is_regular_file && (spec.min_bytes..=spec.max_bytes).contains(&size),
+        path: path.to_string_lossy().to_string(), size })
 }
 #[tauri::command]
 fn engine_status(engine: State<'_, Engine>) -> Status { engine.status() }
@@ -178,74 +178,99 @@ struct DownloadGuard<'a>(&'a AtomicBool);
 impl Drop for DownloadGuard<'_> { fn drop(&mut self) { self.0.store(false, Ordering::SeqCst); } }
 
 #[tauri::command]
-async fn download_model(app: AppHandle, engine: State<'_, Engine>) -> Result<ModelInfo, String> {
-    if engine.downloading.swap(true, Ordering::SeqCst) { return Err("A model download is already running".into()); }
+async fn download_model(app: AppHandle, engine: State<'_, Engine>,
+    model_id: Option<String>, download_dir: Option<String>) -> Result<ModelInfo, String> {
+    let spec = model_catalog::spec(model_id.as_deref())?;
+    let path = model_catalog::destination(&app, spec, download_dir.as_deref())?;
+    if engine.downloading.swap(true, Ordering::SeqCst) {
+        return Err("A model download is already running".into());
+    }
     let _guard = DownloadGuard(&engine.downloading);
-    let path = model_path(&app)?;
-    if check_gguf(&path).is_ok() { return model_info(app); }
+    // The first release downloaded 1.5B into the app's data/models folder.
+    // Preserve it without moving or copying any file when that location is selected.
+    let info = model_info(app.clone(), model_id.clone(), download_dir.clone())?;
+    if info.installed { return Ok(info); }
+    model_catalog::require_unused_target(&path)?;
     let parent = path.parent().ok_or("Invalid model destination")?;
-    tokio::fs::create_dir_all(parent).await.map_err(|e| e.to_string())?;
-    let tmp = path.with_extension("gguf.part");
+    if download_dir.as_deref().is_none_or(|v| v.trim().is_empty()) {
+        tokio::fs::create_dir_all(parent).await
+            .map_err(|e| format!("Cannot create default model folder: {e}"))?;
+    }
+    // The temporary file lives on the SELECTED drive, not on LocalForge's system drive.
+    let tmp = parent.join(format!(".{}.{}.part", spec.filename, uuid::Uuid::new_v4()));
     let client = reqwest::Client::builder().connect_timeout(Duration::from_secs(20))
-        .timeout(Duration::from_secs(3600)).build().map_err(|e| e.to_string())?;
+        .timeout(Duration::from_secs(7200)).build().map_err(|e| e.to_string())?;
     let head_client = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(30)).build().map_err(|e| e.to_string())?;
     let result: Result<(), String> = async {
-        // Capture the expected LFS digest before following Hugging Face's signed CDN redirect.
-        // The final CDN response can have a short, unrelated HTTP ETag.
-        let head = head_client.head(MODEL_URL).send().await
+        // Capture Hugging Face's LFS SHA-256 BEFORE following signed CDN redirects.
+        let head = head_client.head(spec.url).send().await
             .map_err(|e| format!("Cannot inspect model metadata: {e}"))?;
         if !head.status().is_success() && !head.status().is_redirection() {
             return Err(format!("Model metadata returned HTTP {}", head.status()));
         }
-        let etag = head.headers().get("x-linked-etag").or_else(|| head.headers().get("etag"))
+        let sha = head.headers().get("x-linked-etag").or_else(|| head.headers().get("etag"))
             .and_then(|v| v.to_str().ok()).unwrap_or("").trim_matches('"').to_ascii_lowercase();
-        if etag.len() != 64 || !etag.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err("The model host did not provide a verifiable SHA-256. Download was refused".into());
+        if sha.len() != 64 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err("The model host did not provide a verifiable SHA-256. Download refused.".into());
         }
         let expected_size = head.headers().get("x-linked-size")
             .and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<u64>().ok())
             .or_else(|| head.content_length())
             .ok_or("The model host did not provide a verified file length")?;
-        if !(MIN_MODEL_BYTES..=MAX_MODEL_BYTES).contains(&expected_size) {
-            return Err("Unexpected model size; refusing this file".into());
+        if !(spec.min_bytes..=spec.max_bytes).contains(&expected_size) {
+            return Err(format!("Unexpected model size for {}; refusing the file", spec.id));
         }
-        let response = client.get(MODEL_URL).send().await.map_err(|e| format!("Model download failed: {e}"))?
+        // Same-volume preflight: avoid filling the main drive or chosen external disk.
+        let free = fs2::available_space(parent).map_err(|e| format!(
+            "Cannot check free disk space in the selected model folder: {e}"))?;
+        if free < expected_size.saturating_add(128 * 1024 * 1024) {
+            return Err(format!("Not enough space on the selected drive. Need at least {:.2} GB free (including reserve), have {:.2} GB.",
+                (expected_size + 128 * 1024 * 1024) as f64 / 1e9, free as f64 / 1e9));
+        }
+        let response = client.get(spec.url).send().await.map_err(|e| format!("Model download failed: {e}"))?
             .error_for_status().map_err(|e| format!("Model host returned an error: {e}"))?;
         if let Some(length) = response.content_length() {
             if length != expected_size { return Err("Model host changed its file size during download".into()); }
         }
-        let total = expected_size;
-        let mut file = tokio::fs::File::create(&tmp).await.map_err(|e| e.to_string())?;
+        // create_new refuses existing files and symlinks, even if a stale .part file is present.
+        use tokio::io::AsyncWriteExt;
+        let mut file = tokio::fs::OpenOptions::new().write(true).create_new(true)
+            .open(&tmp).await.map_err(|e| format!("Cannot create model temporary file on selected drive: {e}"))?;
         let mut stream = response.bytes_stream();
         let mut hasher = Sha256::new();
         let mut received = 0u64;
         let mut last_report = 0u64;
-        use tokio::io::AsyncWriteExt;
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| format!("Model download interrupted: {e}"))?;
             received += chunk.len() as u64;
-            if received > total { return Err("Model exceeded advertised size".into()); }
+            if received > expected_size { return Err("Model exceeded advertised size".into()); }
             hasher.update(&chunk);
-            file.write_all(&chunk).await.map_err(|e| e.to_string())?;
-            if received - last_report > 4_000_000 || received == total {
-                let _ = app.emit("model-download", DownloadProgress { received, total, status: "downloading" });
+            file.write_all(&chunk).await.map_err(|e| format!("Cannot write model to selected drive: {e}"))?;
+            if received - last_report > 4_000_000 || received == expected_size {
+                let _ = app.emit("model-download", DownloadProgress {
+                    received, total: expected_size, status: "downloading"
+                });
                 last_report = received;
             }
         }
         file.flush().await.map_err(|e| e.to_string())?;
+        file.sync_all().await.map_err(|e| e.to_string())?;
         drop(file);
-        if received != total { return Err("Model download ended early".into()); }
-        if format!("{:x}", hasher.finalize()) != etag { return Err("Downloaded model failed SHA-256 verification".into()); }
-        check_gguf(&tmp)?;
-        if path.exists() { tokio::fs::remove_file(&path).await.map_err(|e| e.to_string())?; }
-        tokio::fs::rename(&tmp, &path).await.map_err(|e| e.to_string())?;
-        let _ = app.emit("model-download", DownloadProgress { received, total, status: "complete" });
+        if received != expected_size { return Err("Model download ended early".into()); }
+        if format!("{:x}", hasher.finalize()) != sha { return Err("Downloaded model failed SHA-256 verification".into()); }
+        let checked_size = check_gguf(&tmp)?;
+        if checked_size != expected_size { return Err("Downloaded GGUF length did not match metadata".into()); }
+        model_catalog::require_unused_target(&path)?;
+        tokio::fs::rename(&tmp, &path).await.map_err(|e| format!("Cannot complete model download: {e}"))?;
+        let _ = app.emit("model-download", DownloadProgress {
+            received, total: expected_size, status: "complete"
+        });
         Ok(())
     }.await;
     if result.is_err() { let _ = tokio::fs::remove_file(&tmp).await; }
     result?;
-    model_info(app)
+    model_info(app, model_id, download_dir)
 }
 
 #[tauri::command]
@@ -283,7 +308,7 @@ async fn start_model(app: AppHandle, engine: State<'_, Engine>, model_path: Opti
         // Qwen2.5-Coder-1.5B GGUF has native 32K context. 64K is
         // experimental YaRN extrapolation with no long-context guarantee.
         if context_tokens > NATIVE_QWEN_CONTEXT_TOKENS
-            && path.file_name().is_some_and(|n| n.to_string_lossy() == MODEL_NAME) {
+            && path.file_name().is_some_and(model_catalog::is_native_qwen25) {
             command.arg("--rope-scaling").arg("yarn")
                 .arg("--rope-scale").arg("2")
                 .arg("--yarn-orig-ctx").arg(NATIVE_QWEN_CONTEXT_TOKENS.to_string());
@@ -310,7 +335,9 @@ async fn start_model(app: AppHandle, engine: State<'_, Engine>, model_path: Opti
     let _ = engine.stop();
     Err(format!("Model did not become ready in 120 seconds (file size {size} bytes). Try fewer threads or inspect the runtime log"))
 }
-fn model_path_default(app: &AppHandle) -> Result<PathBuf, String> { model_path(app) }
+fn model_path_default(app: &AppHandle) -> Result<PathBuf, String> {
+    model_catalog::destination(app, model_catalog::spec(None)?, None)
+}
 #[tauri::command]
 fn stop_model(engine: State<'_, Engine>) -> Result<Status, String> { engine.stop()?; Ok(engine.status()) }
 #[tauri::command]
