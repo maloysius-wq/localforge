@@ -1,4 +1,5 @@
 mod workspace;
+mod workspace_db;
 mod updates;
 use futures_util::StreamExt;
 use serde::Serialize;
@@ -574,7 +575,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(Engine::default())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![model_info, engine_status, download_model, start_model, stop_model, cancel_generation, generate, workspace::inspect_project, workspace::read_project_file, workspace::apply_project_change, workspace::undo_project_change, workspace::apply_project_changes, workspace::undo_project_changes, updates::check_for_updates, updates::install_verified_update])
+        .invoke_handler(tauri::generate_handler![model_info, engine_status, download_model, start_model, stop_model, cancel_generation, generate, workspace::inspect_project, workspace::read_project_file, workspace::apply_project_change, workspace::undo_project_change, workspace::apply_project_changes, workspace::undo_project_changes, workspace_db::initialize_native_workspace, workspace_db::save_native_workspace, updates::check_for_updates, updates::install_verified_update])
         .on_window_event(|window, event| {
             if matches!(event, WindowEvent::Destroyed) { let _ = window.state::<Engine>().stop(); }
         })
