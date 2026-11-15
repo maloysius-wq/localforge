@@ -147,7 +147,7 @@ def main() -> None:
         finish = reply["choices"][0].get("finish_reason")
         if not first_reply.strip():
             raise AssertionError("Real model returned no text; inference smoke failed.")
-        OUTPUT.write_text("FIRST PASS FINISH " + str(finish) + "\\n" + first_reply, encoding="utf-8")
+        OUTPUT.write_text("FIRST PASS FINISH " + str(finish) + "\n" + first_reply, encoding="utf-8")
         print("First-pass reply:", len(first_reply), "chars; finish:", finish,
               "complete HTML:", is_complete_html(first_reply), flush=True)
         # Browser results are first-pass model QUALITY metrics, not a CI release gate.
