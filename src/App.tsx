@@ -185,6 +185,7 @@ export default function App() {
   const [detailTab, setDetailTab] = useState<Tab>("activity");
   const [notice, setNotice] = useState("");
   const [storageWarning, setStorageWarning] = useState(false);
+  const [preferencesWarning, setPreferencesWarning] = useState(false);
   const [addingProject, setAddingProject] = useState(false);
   const [engine, setEngine] = useState<EngineStatus>(emptyStatus);
   const [model, setModel] = useState<ModelInfo>(emptyModel);
@@ -264,9 +265,10 @@ export default function App() {
       localStorage.setItem("localforge.threads.v1", String(threads));
       localStorage.setItem("localforge.context-tokens.v1", String(contextTokens));
       localStorage.setItem("localforge.auto-load.v1", String(autoLoad));
+      setPreferencesWarning(false);
     } catch {
-      // Settings can fail under a WebView storage quota without crashing the app.
-      setStorageWarning(true);
+      // Settings may fail under a WebView quota even when native SQLite is healthy.
+      setPreferencesWarning(true);
     }
   }, [modelPath, threads, contextTokens, autoLoad]);
   useEffect(() => {
@@ -277,7 +279,7 @@ export default function App() {
     document.documentElement.dataset.theme = workspace.theme;
     if (!workspaceReady) return;
     if (isTauri()) {
-      void saveNativeWorkspace(workspace).catch(() => setStorageWarning(true));
+      void saveNativeWorkspace(workspace).then(() => setStorageWarning(false)).catch(() => setStorageWarning(true));
     } else if (!saveWorkspace(workspace)) setStorageWarning(true);
   }, [workspace, workspaceReady]);
   useEffect(() => {
@@ -744,7 +746,7 @@ export default function App() {
       </div>
       <div className="detail-footer"><div><span className="footer-small-dot"/> Local-first workspace</div><span>0.3.8</span></div>
     </aside>}
-    {(notice || storageWarning) && <div className="toast" role="alert"><Info size={17}/><span>{storageWarning ? (isTauri() ? "Unable to save the native workspace database. New changes may not survive restarting the app." : "Local storage is unavailable or full. Changes may not survive restarting the app.") : notice}</span><button aria-label="Dismiss notification" onClick={() => { setNotice(""); setStorageWarning(false); }}><X size={16}/></button></div>}
+    {(notice || storageWarning || preferencesWarning) && <div className="toast" role="alert"><Info size={17}/><span>{storageWarning ? (isTauri() ? "Unable to save the native workspace database. New changes may not survive restarting the app." : "Local storage is unavailable or full. Changes may not survive restarting the app.") : preferencesWarning ? "Some model preferences could not be saved in WebView storage. Your conversations use the separate native database." : notice}</span><button aria-label="Dismiss notification" onClick={() => { setNotice(""); setStorageWarning(false); setPreferencesWarning(false); }}><X size={16}/></button></div>
     {batchProposal && <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget && !batchBusy)setBatchProposal(null);}}>
       <section className="settings-modal proposal-modal batch-review-modal" role="dialog" aria-modal="true" aria-labelledby="batch-review-title">
         <div className="modal-heading"><div><span className="eyebrow">ONE APPROVAL TO WRITE FILES</span>
