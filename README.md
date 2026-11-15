@@ -4,6 +4,14 @@
 
 LocalForge is an open-source project toward a compact, shared coding model with Python, web, desktop, mobile, and eventually pixel-art specialties. The interface resembles a desktop coding agent, but the initial releases deliberately add capabilities one by one with clear status reporting and local privacy safeguards.
 
+## v0.3.9: choose a model and where it downloads
+
+- In Settings → Local inference, select one of three Q4_K_M model candidates: Qwen2.5-Coder-1.5B (Apache 2.0), Qwen2.5-Coder-3B (Qwen Research noncommercial), Qwen3-4B-Instruct-2507 (Apache 2.0 upstream, Unsloth's GGUF quantization).
+- Click **Choose download folder** to select a folder on another disk before pressing **Download and verify model**. The partial download and finished GGUF are kept in the chosen folder and space is checked before streaming.
+- Each download comes only from an allowlisted Hugging Face repository, must match advertised SHA-256 and size, and does not overwrite an existing file. Nothing downloads automatically.
+- A folder change does not move existing models. Existing models in an earlier folder can still be loaded with **Choose GGUF file**; the original 1.5B app-data download remains intact.
+- Larger models need more RAM and CPU time. None are certified for reliable application creation without real benchmarks.
+
 ## v0.3.8: native SQLite conversation storage
 
 - Desktop conversations, projects, and workspace settings are now stored in the native local `workspace.sqlite3` database (app data directory). No cloud service or user CLI is involved.
