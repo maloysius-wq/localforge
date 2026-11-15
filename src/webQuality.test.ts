@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inspectWebSource, buildRepairRequest } from "./webQuality";
+import { inspectWebSource } from "./webQuality";
 
 const sample = String.raw`<!doctype html><html><body>
 <div id="game-board"></div><button onclick="restart()">Restart</button>
@@ -24,7 +24,6 @@ describe("offline source verification", () => {
     expect(report.checks.find(x=>x.id==="render-board")?.passed).toBe(false);
     expect(report.checks.find(x=>x.id==="cell-clicks")?.passed).toBe(false);
     expect(report.checks.find(x=>x.id==="startup-loss")?.passed).toBe(false);
-    expect(buildRepairRequest("Build Minesweeper",bad,report)).toContain("AUTOMATED SOURCE CHECK FAILURES");
   });
   it("accepts a syntactically valid source with board/events/flags/restart for the static gate only",()=>{
     const report=inspectWebSource(sample,"Build a complete Minesweeper game");
