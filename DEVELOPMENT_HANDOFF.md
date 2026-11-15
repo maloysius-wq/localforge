@@ -116,3 +116,10 @@ A pleasant GUI-first, offline CPU-only software-building workspace for older Win
 - 64K YaRN extrapolation remains specific to recognized Qwen2.5-Coder filenames, not Qwen3. The existing CPU-only runtime, project approval/undo, UI CSP, updates and native SQLite workspace persistence stay intact.
 - Hardware and live quality limits: native Windows/Linux packaged launcher, Hugging Face SHA metadata and actual CPU inference of both larger models require field tests. Model size is not total RAM usage. Do not claim reliable app generation based on this model catalog alone.
 - Next: benchmark comparable tasks and inference latency/memory across all 3 models, then add explicit-opt-in isolated test execution.
+
+## v0.3.10: first-pass-only model output (user-requested)
+- Removed BOTH automatic generation recovery paths: the code-format retry when initial model output lacks a complete implementation and the bounded HTML static-check repair loop (previously two more inferences).
+- `src/verificationFlow.ts` now statically inspects the ONE original reply without triggering inference, reporting pass/fail/not-applicable. The full original model content is still shown in chat. When static checks fail, no automatic file changes are staged; explicit manual proposal/review/approval and undo safeguards remain.
+- Composer indicates one model response instead of showing repair counts. Static checks are not a substitute for a real browser runtime.
+- CI `scripts/model_smoke.py` now records one original model completion and one isolated browser evaluation (if an HTML document exists). A non-HTML or browser-failing output remains a recorded quality failure, not a reason to issue automated repair prompts or mark infrastructure smoke as broken. Artifacts: `web-quality-artifacts/model-first-pass-metrics.json` and original reply text.
+- To compare 1.5B, 3B and 4B fairly, benchmark on identical tasks and settings with no automated corrections. Native CPU startup and broader task testing remain pending.
