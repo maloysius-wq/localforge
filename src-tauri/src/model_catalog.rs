@@ -39,19 +39,19 @@ pub(crate) fn spec(id: Option<&str>) -> Result<ModelSpec, String> {
     }
 }
 
+fn explicit_folder(selected: &str) -> Result<PathBuf, String> {
+    // The folder must already exist: users choose it in a native directory picker.
+    // Never create an arbitrary absolute directory supplied through an IPC argument.
+    let resolved = Path::new(selected).canonicalize()
+        .map_err(|e| format!("Selected model folder is unavailable: {e}. Choose another folder in Settings."))?;
+    if !resolved.is_dir() {
+        return Err("The model destination is not a directory.".into());
+    }
+    Ok(resolved)
+}
 pub(crate) fn destination(app: &AppHandle, model: ModelSpec, download_dir: Option<&str>) -> Result<PathBuf, String> {
     let folder = match download_dir.filter(|value| !value.trim().is_empty()) {
-        Some(selected) => {
-            // The folder must already exist: users choose it in a native directory picker.
-            // Never create an arbitrary absolute directory supplied through an IPC argument.
-            let path = Path::new(selected);
-            let resolved = path.canonicalize()
-                .map_err(|e| format!("Selected model folder is unavailable: {e}. Choose another folder in Settings."))?;
-            if !resolved.is_dir() {
-                return Err("The model destination is not a directory.".into());
-            }
-            resolved
-        }
+        Some(selected) => explicit_folder(selected)?,
         None => app.path().app_data_dir().map_err(|e| e.to_string())?.join("models"),
     };
     Ok(folder.join(model.filename))
@@ -86,6 +86,21 @@ mod tests {
         }
         assert!(spec(Some("https://evil.example/gguf")).is_err());
         assert!(spec(Some("../../somewhere")).is_err());
+    }
+    #[test]
+    fn chosen_external_folder_must_exist_and_be_a_folder() {
+        let root = std::env::temp_dir().join(format!("localforge-model-dir-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let folder = explicit_folder(root.to_str().unwrap()).unwrap();
+        assert_eq!(folder, root.canonicalize().unwrap());
+        let selected_destination = folder.join(spec(Some("qwen25-coder-3b")).unwrap().filename);
+        assert_eq!(selected_destination.parent().unwrap(), folder);
+        let bogus = root.join("missing");
+        assert!(explicit_folder(bogus.to_str().unwrap()).is_err());
+        let file = root.join("not-a-folder");
+        fs::write(&file, b"x").unwrap();
+        assert!(explicit_folder(file.to_str().unwrap()).is_err());
+        fs::remove_dir_all(&root).unwrap();
     }
     #[test]
     fn protects_existing_destination_files_and_symlinks() {
