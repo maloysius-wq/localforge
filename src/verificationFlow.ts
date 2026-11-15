@@ -1,48 +1,32 @@
 import { extractProposedFiles } from "./autoEdits";
-import { buildRepairRequest, inspectWebSource, type WebQualityReport } from "./webQuality";
+import { inspectWebSource, type WebQualityReport } from "./webQuality";
 
-export type WebRepairPhase = "checking" | "repairing" | "static-pass" | "failed" | "not-applicable";
-export type WebRepairProgress = { phase: WebRepairPhase; repairs: number; report: WebQualityReport | null };
-export type WebRepairResult = WebRepairProgress & { reply: string };
-export const MAX_WEB_REPAIRS = 2;
+export type WebCheckPhase = "checking" | "static-pass" | "failed" | "not-applicable";
+export type WebCheckProgress = { phase: WebCheckPhase; report: WebQualityReport | null };
+export type WebCheckResult = WebCheckProgress & { reply: string };
 
-export async function verifyAndRepairWeb(
-  initialReply: string,
+/**
+ * Inspect one model response. Deliberately NEVER invokes a model again.
+ * Static source checks are informational and a safe staging gate, not proof
+ * that generated HTML behaves correctly in a real browser.
+ */
+export function verifyFirstPassWeb(
+  reply: string,
   originalRequest: string,
-  generateRepair: (prompt: string, round: number) => Promise<string>,
-  options: {
-    charBudget?: number;
-    onProgress?: (progress: WebRepairProgress) => void;
-    canceled?: () => boolean;
-  } = {},
-): Promise<WebRepairResult> {
-  let reply = initialReply;
-  let repairs = 0;
-  let report: WebQualityReport | null = null;
-  const emit = (phase: WebRepairPhase) => options.onProgress?.({phase,repairs,report});
-  emit("checking");
-  while (!options.canceled?.()) {
-    const extraction = extractProposedFiles(reply, originalRequest);
-    const html = extraction.files.find(file => /\.html$/i.test(file.path));
-    if (!html || extraction.error) {
-      emit("not-applicable");
-      return {reply,repairs,report:null,phase:"not-applicable"};
-    }
-    report = inspectWebSource(html.content, originalRequest);
-    if (report.passed) {
-      emit("static-pass");
-      return {reply,repairs,report,phase:"static-pass"};
-    }
-    if (repairs >= MAX_WEB_REPAIRS) {
-      emit("failed");
-      return {reply,repairs,report,phase:"failed"};
-    }
-    const prompt = buildRepairRequest(originalRequest,html.content,report,options.charBudget);
-    repairs++;
-    emit("repairing");
-    reply = await generateRepair(prompt,repairs);
+  onProgress?: (progress: WebCheckProgress) => void,
+): WebCheckResult {
+  onProgress?.({ phase: "checking", report: null });
+  const extraction = extractProposedFiles(reply, originalRequest);
+  const html = extraction.files.find(file => /\.html$/i.test(file.path));
+  if (!html || extraction.error) {
+    const result: WebCheckResult = { reply, report: null, phase: "not-applicable" };
+    onProgress?.(result);
+    return result;
   }
-  return {reply,repairs,report,phase:"failed"};
+  const report = inspectWebSource(html.content, originalRequest);
+  const result: WebCheckResult = { reply, report, phase: report.passed ? "static-pass" : "failed" };
+  onProgress?.(result);
+  return result;
 }
 
 export function summarizeQuality(report: WebQualityReport | null): string {
