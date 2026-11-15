@@ -104,3 +104,8 @@
 .web-verification-details li span{display:inline-block;width:15px}
 .web-verification-details li strong{color:var(--text)}
 .web-verification-details small{font-size:10px}
+
+/* Prevent any edits until native SQLite has been loaded or an import failure fixed. */
+.workspace-startup{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:var(--bg);color:var(--text);padding:32px;text-align:center}
+.workspace-startup .brand-name{font-size:28px;font-weight:750}.workspace-startup h1{font-size:22px;margin:0}.workspace-startup p{max-width:540px;color:var(--muted);line-height:1.6;margin:0}
+.workspace-startup pre{max-width:min(680px,90vw);white-space:pre-wrap;overflow-wrap:anywhere;text-align:left;padding:16px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--text)}
