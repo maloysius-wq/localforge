@@ -11,10 +11,11 @@ import {
   Sun, Terminal, Trash2, X, StopCircle, RefreshCw, RotateCcw, Eye, ClipboardCheck, Maximize2, Minimize2,
 } from "lucide-react";
 import {
-  loadWorkspace, newId, projectLabel, saveWorkspace, uniqueProject,
+  blankState, loadWorkspace, newId, projectLabel, saveWorkspace, uniqueProject, STORAGE_KEY,
   type ChatMessage, type EventLog, type Project, type Thread, type WorkspaceState,
 } from "./storage";
 import { ModelManager } from "./ModelManager";
+import { initializeNativeWorkspace, saveNativeWorkspace } from "./nativeWorkspace";
 import { splitCodeBlocks } from "./codeBlocks";
 import { containsImplementation, retryForActualCode } from "./codeTasks";
 import { prepareGeneration } from "./conversationContext";
@@ -166,13 +167,17 @@ function SettingsModal({ theme, setTheme, onClose, engine, model, progress, down
       <div className="settings-section"><h3>Privacy and safety</h3>
         <div className="setting-summary"><ShieldCheck size={18}/><div><strong>Your data stays on this computer</strong><span>Chats stay local. Your selected project can be inspected on request and edited only after approving each proposed file change. No shell execution. Update checks reach the official GitHub API on request.</span></div></div>
       </div>
-      <div className="settings-footer">LocalForge 0.3.7 · CPU coding workspace</div>
+      <div className="settings-footer">LocalForge 0.3.8 · CPU coding workspace</div>
     </section>
   </div>;
 }
 
 export default function App() {
   const [workspace, setWorkspace] = useState<WorkspaceState>(() => loadWorkspace());
+  const [workspaceReady, setWorkspaceReady] = useState(() => !isTauri());
+  const [workspaceInitError, setWorkspaceInitError] = useState("");
+  const [workspaceInitAttempt, setWorkspaceInitAttempt] = useState(0);
+  const workspaceHydrationRef = useRef<Promise<WorkspaceState> | null>(null);
   const [draft, setDraft] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -228,6 +233,32 @@ export default function App() {
     .sort((a, b) => b.updatedAt - a.updatedAt), [workspace.threads, workspace.activeProjectId]);
 
   useEffect(() => {
+    if (!isTauri()) return;
+    let active = true;
+    if (!workspaceHydrationRef.current) {
+      try {
+        // Read v1 only as a migration source. Never clear or overwrite it after SQLite import.
+        const legacyJson = localStorage.getItem(STORAGE_KEY) ?? JSON.stringify(blankState());
+        workspaceHydrationRef.current = initializeNativeWorkspace(legacyJson);
+      } catch (error) {
+        setWorkspaceInitError(String(error));
+        return;
+      }
+    }
+    void workspaceHydrationRef.current.then(state => {
+      if (!active) return;
+      setWorkspace(state);
+      setWorkspaceInitError("");
+      setWorkspaceReady(true);
+    }).catch(error => {
+      if (!active) return;
+      setWorkspaceInitError(String(error));
+      workspaceHydrationRef.current = null;
+    });
+    return () => { active = false; };
+  }, [workspaceInitAttempt]);
+
+  useEffect(() => {
     localStorage.setItem("localforge.model-path.v1", JSON.stringify(modelPath));
     localStorage.setItem("localforge.threads.v1", String(threads));
     localStorage.setItem("localforge.context-tokens.v1", String(contextTokens));
@@ -239,13 +270,17 @@ export default function App() {
   useEffect(() => { activeProjectIdRef.current = workspace.activeProjectId; }, [workspace.activeProjectId]);
   useEffect(() => {
     document.documentElement.dataset.theme = workspace.theme;
-    if (!saveWorkspace(workspace)) setStorageWarning(true);
-  }, [workspace]);
+    if (!workspaceReady) return;
+    if (isTauri()) {
+      void saveNativeWorkspace(workspace).catch(() => setStorageWarning(true));
+    } else if (!saveWorkspace(workspace)) setStorageWarning(true);
+  }, [workspace, workspaceReady]);
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [activeThread?.messages.length, activeThread?.id, liveText]);
   useEffect(() => {
     function keydown(e: globalThis.KeyboardEvent) {
+      if (!workspaceReady) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") { e.preventDefault(); createChat(); }
       if ((e.ctrlKey || e.metaKey) && e.key === ",") { e.preventDefault(); setSettingsOpen(true); }
       if (e.key === "Escape") { setSettingsOpen(false); setNotice(""); }
@@ -253,7 +288,7 @@ export default function App() {
     window.addEventListener("keydown", keydown);
     return () => window.removeEventListener("keydown", keydown);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspace.activeProjectId]);
+  }, [workspace.activeProjectId, workspaceReady]);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -587,6 +622,15 @@ export default function App() {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submitPrompt(draft); }
   }
 
+  if (!workspaceReady) return <div className="workspace-startup" role="status">
+    <div className="brand-name">Local<span>Forge</span></div>
+    <h1>{workspaceInitError ? "Cannot open your saved workspace" : "Opening your workspace…"}</h1>
+    {workspaceInitError ? <><p>Your conversations have not been erased or replaced. LocalForge will not start an empty workspace over existing data.</p>
+      <pre>{workspaceInitError}</pre>
+      <button type="button" className="model-action primary" onClick={() => setWorkspaceInitAttempt(n => n + 1)}>Retry opening workspace</button></>
+      : <p>Loading local conversations and projects from the native database.</p>}
+  </div>;
+
   return <div className={`app-shell ${sidebarOpen ? "" : "sidebar-hidden"} ${detailsOpen ? "" : "details-hidden"}`}>
     <aside className="sidebar" aria-label="Projects and conversations">
       <div className="brand"><div className="brand-mark"><Code2 size={20}/></div><div className="brand-name">Local<span>Forge</span></div>
@@ -607,7 +651,7 @@ export default function App() {
         </div>)}
       </div>
       <div className="sidebar-footer">
-        <div className="sidebar-status"><span className="status-indicator"/><div><strong>{engine.running ? "CPU model ready" : "Model not loaded"}</strong><span>Offline coding · v0.3.7</span></div></div>
+        <div className="sidebar-status"><span className="status-indicator"/><div><strong>{engine.running ? "CPU model ready" : "Model not loaded"}</strong><span>Offline coding · v0.3.8</span></div></div>
         <button className="sidebar-settings" onClick={() => setSettingsOpen(true)}><Settings2 size={18}/> Settings <span>⌘,</span></button>
       </div>
     </aside>
@@ -693,9 +737,9 @@ export default function App() {
             </> : <div className="detail-empty"><Folder size={24}/><p>No project selected</p><span>Add a project folder to associate conversations with real work.</span><button onClick={addProject}>Choose folder <ArrowRight size={14}/></button></div>}</div>
         </>}
       </div>
-      <div className="detail-footer"><div><span className="footer-small-dot"/> Local-first workspace</div><span>0.3.7</span></div>
+      <div className="detail-footer"><div><span className="footer-small-dot"/> Local-first workspace</div><span>0.3.8</span></div>
     </aside>}
-    {(notice || storageWarning) && <div className="toast" role="alert"><Info size={17}/><span>{storageWarning ? "Local storage is unavailable or full. Changes may not survive restarting the app." : notice}</span><button aria-label="Dismiss notification" onClick={() => { setNotice(""); setStorageWarning(false); }}><X size={16}/></button></div>}
+    {(notice || storageWarning) && <div className="toast" role="alert"><Info size={17}/><span>{storageWarning ? (isTauri() ? "Unable to save the native workspace database. New changes may not survive restarting the app." : "Local storage is unavailable or full. Changes may not survive restarting the app.") : notice}</span><button aria-label="Dismiss notification" onClick={() => { setNotice(""); setStorageWarning(false); }}><X size={16}/></button></div>}
     {batchProposal && <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget && !batchBusy)setBatchProposal(null);}}>
       <section className="settings-modal proposal-modal batch-review-modal" role="dialog" aria-modal="true" aria-labelledby="batch-review-title">
         <div className="modal-heading"><div><span className="eyebrow">ONE APPROVAL TO WRITE FILES</span>
