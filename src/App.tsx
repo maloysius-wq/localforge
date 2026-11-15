@@ -18,11 +18,11 @@ import { ModelManager } from "./ModelManager";
 import { DEFAULT_MODEL_ID, isCatalogModelId, type CatalogModelId } from "./modelCatalog";
 import { initializeNativeWorkspace, saveNativeWorkspace } from "./nativeWorkspace";
 import { splitCodeBlocks } from "./codeBlocks";
-import { containsImplementation, retryForActualCode } from "./codeTasks";
+import { containsImplementation } from "./codeTasks";
 import { prepareGeneration } from "./conversationContext";
 import { ContextRing } from "./ContextRing";
 import { extractProposedFiles } from "./autoEdits";
-import { verifyAndRepairWeb, summarizeQuality, type WebRepairProgress } from "./verificationFlow";
+import { verifyFirstPassWeb, summarizeQuality, type WebCheckProgress } from "./verificationFlow";
 import { DEFAULT_CONTEXT_TOKENS, validContextTokens, contextBudget } from "./contextConfig";
 import { inspectProject, readProjectFile, applyProjectChange, undoProjectChange, applyProjectChanges, undoProjectChanges, suggestFilename,
   type ProjectSnapshot, type ProjectFile } from "./projectTools";
@@ -173,7 +173,7 @@ function SettingsModal({ theme, setTheme, onClose, engine, model, progress, down
       <div className="settings-section"><h3>Privacy and safety</h3>
         <div className="setting-summary"><ShieldCheck size={18}/><div><strong>Your data stays on this computer</strong><span>Chats stay local. Your selected project can be inspected on request and edited only after approving each proposed file change. No shell execution. Update checks reach the official GitHub API on request.</span></div></div>
       </div>
-      <div className="settings-footer">LocalForge 0.3.9 · CPU coding workspace</div>
+      <div className="settings-footer">LocalForge 0.3.10 · CPU coding workspace</div>
     </section>
   </div>;
 }
@@ -228,7 +228,7 @@ export default function App() {
   const [proposalBusy, setProposalBusy] = useState(false);
   const [batchProposal, setBatchProposal] = useState<{projectId:string;root:string;edits:{path:string;content:string;original:ProjectFile}[]} | null>(null);
   const [batchBusy, setBatchBusy] = useState(false);
-  const [webVerification, setWebVerification] = useState<Record<string,WebRepairProgress>>({});
+  const [webVerification, setWebVerification] = useState<Record<string,WebCheckProgress>>({});
   const [contextMeters, setContextMeters] = useState<Record<string,{used:number;max:number;kind:"prompt"|"total"}>>(() => {
     try { return JSON.parse(localStorage.getItem("localforge.context-meter.v1") || "{}"); } catch { return {}; }
   });
@@ -602,26 +602,11 @@ export default function App() {
           } catch (error) { setNotice("Project inspection was limited: "+String(error)); }
         }
         const { task, messages: codeMessages, projectContext } = prepareGeneration(content,history,snapshot,contextTokens);
-        let reply = await generate(requestId, codeMessages, projectContext, !!task);
-        const initialFiles = extractProposedFiles(reply,content);
-        if (task && !canceledRef.current && !containsImplementation(reply, task.target)
-          && !(activeProject && initialFiles.files.length > 1)) {
-          setNotice("Local model returned no source code. Retrying once with a code-first request…");
-          setLiveText("");
-          reply = await generate(requestId, [{ role: "user", content: retryForActualCode(task) + "\n\n" + codeMessages[0].content.slice(-4600) }], projectContext, true);
-        }
+        // Exactly one model inference per user prompt: no code-format retry or repair prompt.
+        const reply = await generate(requestId, codeMessages, projectContext, !!task);
         const verification = task?.target === "html" && !canceledRef.current
-          ? await verifyAndRepairWeb(reply,task!.originalRequest + "\n" + content,
-              async (repairRequest,round) => {
-                setNotice("Source checks found defects. Attempting repair " + round + "/2 with the local model…");
-                setLiveText("");
-                return await generate(requestId,[{role:"user",content:repairRequest}],projectContext,true);
-              }, {
-                charBudget:Math.min(10300,contextBudget(contextTokens).total),
-                canceled:()=>canceledRef.current,
-                onProgress:(status)=>setWebVerification(old=>({...old,[threadId]:status}))
-              }) : null;
-        if (verification) reply=verification.reply;
+          ? verifyFirstPassWeb(reply, task.originalRequest + "\n" + content,
+              status => setWebVerification(old => ({ ...old, [threadId]: status }))) : null;
         if (canceledRef.current) {
           setNotice("Generation stopped. No partial file was saved.");
           return;
@@ -632,17 +617,16 @@ export default function App() {
           const validated = (!task || containsImplementation(reply, task.target)
             || (Boolean(activeProject) && candidates.files.length > 1)) && !staticFailed;
           const finalText = staticFailed
-            ? "⚠ LocalForge could NOT verify this implementation. After "
-              + verification!.repairs + " repair attempts, it still failed these source checks:\n"
+            ? "⚠ First-pass source checks failed. No automatic repair was attempted.\n"
               + summarizeQuality(verification!.report) + "\n\nThis code has NOT been approved or written.\n\n" + reply
             : validated ? reply
-            : "⚠ LocalForge could not obtain a complete code implementation from this model. The text below is not a finished program.\n\n" + reply;
+            : "⚠ First-pass output did not contain a complete code implementation. No automatic retry was attempted.\n\n" + reply;
           const answer: ChatMessage = { id: newId(), role: "assistant", content: finalText, createdAt: Date.now() };
           setWorkspace(state => record({ ...state, threads: state.threads.map(t => t.id === threadId
             ? { ...t, messages: [...t.messages, answer], updatedAt: Date.now() } : t) },
             validated ? "Local model response received" : "Local model returned no complete implementation"));
           if (!validated) setNotice(staticFailed
-            ? "Static verification failed after repair attempts. No code was automatically staged."
+            ? "First-pass static verification failed. No code was automatically staged."
             : "Model did not produce usable code. No changes were automatically staged.");
           else if (task && activeProject) {
             if (activeProjectIdRef.current !== activeProject.id) {
@@ -699,7 +683,7 @@ export default function App() {
         </div>)}
       </div>
       <div className="sidebar-footer">
-        <div className="sidebar-status"><span className="status-indicator"/><div><strong>{engine.running ? "CPU model ready" : "Model not loaded"}</strong><span>Offline coding · v0.3.9</span></div></div>
+        <div className="sidebar-status"><span className="status-indicator"/><div><strong>{engine.running ? "CPU model ready" : "Model not loaded"}</strong><span>Offline coding · v0.3.10</span></div></div>
         <button className="sidebar-settings" onClick={() => setSettingsOpen(true)}><Settings2 size={18}/> Settings <span>⌘,</span></button>
       </div>
     </aside>
@@ -733,10 +717,9 @@ export default function App() {
         {activeThread && webVerification[activeThread.id] && webVerification[activeThread.id].phase !== "not-applicable" && <div className={"web-verification " + webVerification[activeThread.id].phase} role="status">
           <div className="web-verification-title"><ShieldCheck size={15}/>
             <strong>{webVerification[activeThread.id].phase === "checking" ? "Checking generated source…" :
-              webVerification[activeThread.id].phase === "repairing" ? "Repairing detected defects…" :
-              webVerification[activeThread.id].phase === "static-pass" ? "Source checks passed, browser behavior untested" :
-              "Source verification failed, no automatic file changes"}</strong>
-            <span>{webVerification[activeThread.id].repairs}/2 repairs</span>
+              webVerification[activeThread.id].phase === "static-pass" ? "First-pass checks passed, browser behavior untested" :
+              "First-pass checks failed, no automatic retry or file changes"}</strong>
+            <span>1 model response</span>
           </div>
           {webVerification[activeThread.id].report && <details className="web-verification-details" open={webVerification[activeThread.id].phase === "failed"}>
             <summary>View {webVerification[activeThread.id].report!.checks.length} source checks</summary>
@@ -785,7 +768,7 @@ export default function App() {
             </> : <div className="detail-empty"><Folder size={24}/><p>No project selected</p><span>Add a project folder to associate conversations with real work.</span><button onClick={addProject}>Choose folder <ArrowRight size={14}/></button></div>}</div>
         </>}
       </div>
-      <div className="detail-footer"><div><span className="footer-small-dot"/> Local-first workspace</div><span>0.3.9</span></div>
+      <div className="detail-footer"><div><span className="footer-small-dot"/> Local-first workspace</div><span>0.3.10</span></div>
     </aside>}
     {(notice || storageWarning || preferencesWarning) && <div className="toast" role="alert"><Info size={17}/><span>{storageWarning ? (isTauri() ? "Unable to save the native workspace database. New changes may not survive restarting the app." : "Local storage is unavailable or full. Changes may not survive restarting the app.") : preferencesWarning ? "Some model preferences could not be saved in WebView storage. Your conversations use the separate native database." : notice}</span><button aria-label="Dismiss notification" onClick={() => { setNotice(""); setStorageWarning(false); setPreferencesWarning(false); }}><X size={16}/></button></div>}
     {batchProposal && <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget && !batchBusy)setBatchProposal(null);}}>
