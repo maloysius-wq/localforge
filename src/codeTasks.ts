@@ -44,12 +44,3 @@ export function containsImplementation(reply: string, target: CodeTarget): boole
   });
 }
 
-export function retryForActualCode(task: CodeTask): string {
-  const opening = task.target === "html" ? "an html fenced source-code block"
-    : task.target === "python" ? "a python fenced source-code block" : "a fenced source-code block";
-  return "IMPLEMENT THE SOFTWARE. OUTPUT SOURCE CODE, NOT A DESCRIPTION.\n\n"
-    + task.request + "\n\nYour previous attempt did not include a complete usable source-code block. "
-    + "Start your reply with " + opening + ". Return the smallest complete working implementation now, "
-    + "with actual functions and event handlers. Don't offer to expand later or describe what you would write. "
-    + "Do not claim it has been saved or tested.";
-}

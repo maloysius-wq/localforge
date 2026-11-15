@@ -140,20 +140,3 @@ export function inspectWebSource(source: string, prompt: string): WebQualityRepo
   };
 }
 
-export function failedChecks(report: WebQualityReport): QualityCheck[] {
-  return report.checks.filter(check => !check.passed);
-}
-
-export function buildRepairRequest(original: string, source: string, report: WebQualityReport, maxChars = 10500): string {
-  const problems = failedChecks(report).map((item, i) => (i+1) + ". " + item.label + ": " + item.detail).join("\n");
-  const budget = Math.max(1200, maxChars - original.length - problems.length - 850);
-  const previous = source.length > budget ? source.slice(0, budget) + "\n[prior file excerpt truncated]" : source;
-  return "You are REPAIRING an existing implementation, not describing a future fix.\n"
-    + "ORIGINAL REQUEST:\n" + original.slice(0, 1800)
-    + "\n\nAUTOMATED SOURCE CHECK FAILURES:\n" + problems
-    + "\n\nPREVIOUS FILE CONTENTS:\n" + previous
-    + "\n\nReturn one COMPLETE corrected HTML file in a fenced html block. "
-    + "It must create actual visible cells, connect click/right-click events, start without defeat, "
-    + "implement flagging, win/loss, neighboring counts and restart. "
-    + "Do not claim to have executed or browser-tested it.";
-}

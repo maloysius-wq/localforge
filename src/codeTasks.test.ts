@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { codeTaskFor, containsImplementation, retryForActualCode } from "./codeTasks";
+import { codeTaskFor, containsImplementation } from "./codeTasks";
 
 const fence = String.fromCharCode(96).repeat(3);
 describe("code-first intent routing", () => {
@@ -38,8 +38,5 @@ describe("code-first intent routing", () => {
     expect(containsImplementation("Sorry, I can't assist with that request.", "html")).toBe(false);
     expect(containsImplementation(fence + "html\n<html><body><script>let x = 1</script>\n" + fence, "html")).toBe(false);
   });
-  it("creates a narrowly scoped recovery request", () => {
-    const task = codeTaskFor("Create a standalone HTML game", [])!;
-    expect(retryForActualCode(task)).toContain("OUTPUT SOURCE CODE, NOT A DESCRIPTION");
-  });
+
 });

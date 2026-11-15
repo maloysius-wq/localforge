@@ -136,35 +136,21 @@ def main() -> None:
         if not any("choices" in line for line in data_lines):
             raise AssertionError("Streaming completion with usage option returned no model deltas")
         print("Pinned model supports chat streaming with usage option", flush=True)
-        for attempt in range(2):
-            prompt = context if attempt == 0 else (
-                "IMPLEMENT THE SOFTWARE. OUTPUT SOURCE CODE, NOT A DESCRIPTION.\n\n" + context
-                + "\nYour previous attempt did not include a complete usable source-code block. "
-                "Start your reply with an html fenced source-code block. Return the smallest complete "
-                "working implementation now, with actual functions and event handlers. "
-                "Don't offer to expand later or describe what you would write.")
-            print("Starting real CPU model generation, attempt", attempt + 1, flush=True)
-            reply = request_json(base + "/v1/chat/completions", {
-                "model": "localforge-smoke",
-                "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
-                "stream": False, "max_tokens": 3072, "temperature": 0.1
-            }, timeout=800)
-            content = reply["choices"][0]["message"].get("content") or ""
-            finish = reply["choices"][0].get("finish_reason")
-            output.append("ATTEMPT " + str(attempt + 1) + " FINISH " + str(finish) + "\n" + content)
-            print("Reply:", len(content), "chars; finish:", finish, "complete HTML:", is_complete_html(content), flush=True)
-            if is_complete_html(content):
-                first_reply = content
-                break
-        OUTPUT.write_text("\n\n".join(output))
-        if not is_complete_html(output[-1]):
-            # Only the content, not the record header, determines success.
-            last = output[-1].split("\n", 1)[-1]
-            if not is_complete_html(last):
-                raise AssertionError("Real 1.5B model did not emit complete HTML after 2 tries. Check smoke output artifact.")
-        print("Real model emitted a complete HTML document with embedded script and style.", flush=True)
-        # Functional browser results are explicitly quality METRICS, not a CI
-        # release gate. Preserve both first-attempt and repaired outcomes.
+        # One original model response, without re-prompting for formatting.
+        print("Starting real CPU model generation (first pass only)", flush=True)
+        reply = request_json(base + "/v1/chat/completions", {
+            "model": "localforge-smoke",
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": context}],
+            "stream": False, "max_tokens": 3072, "temperature": 0.1
+        }, timeout=800)
+        first_reply = reply["choices"][0]["message"].get("content") or ""
+        finish = reply["choices"][0].get("finish_reason")
+        if not first_reply.strip():
+            raise AssertionError("Real model returned no text; inference smoke failed.")
+        OUTPUT.write_text("FIRST PASS FINISH " + str(finish) + "\n" + first_reply, encoding="utf-8")
+        print("First-pass reply:", len(first_reply), "chars; finish:", finish,
+              "complete HTML:", is_complete_html(first_reply), flush=True)
+        # Browser results are first-pass model QUALITY metrics, not a CI release gate.
         def extract_html(text: str) -> str:
             fenced = re.search(r"```(?:html)?\s*\n([\s\S]*?)\n```", text, re.I)
             data = fenced.group(1) if fenced else text
@@ -176,13 +162,16 @@ def main() -> None:
             return data[start:end + len("</html>")] if start >= 0 and end > start else ""
 
         candidate_path = ROOT / "localforge-smoke-candidate.html"
-        model_trials = []
-        final_reply = first_reply
-        for revision in range(3):
-            html = extract_html(final_reply)
-            if not html:
-                model_trials.append({"revision": revision, "html": False, "browser_pass": False})
-                break
+        html = extract_html(first_reply)
+        result = {
+            "model": "Qwen2.5-Coder-1.5B-Instruct Q4_K_M",
+            "attempts": 1,
+            "source_complete": is_complete_html(first_reply),
+            "generated_chars": len(first_reply),
+            "browser_pass": False,
+            "checks": [],
+        }
+        if html:
             candidate_path.write_text(html, encoding="utf-8")
             browser = subprocess.run(
                 ["node", "scripts/web_acceptance.mjs", "--candidate", str(candidate_path)],
@@ -191,40 +180,17 @@ def main() -> None:
             if browser.returncode != 0:
                 raise RuntimeError("Browser test runner failed: " + browser.stderr[-1800:])
             data = json.loads((ROOT / "web-quality-artifacts/model-browser-report.json").read_text())
-            result = data["result"]
-            model_trials.append({
-                "revision": revision,
-                "html": True,
-                "browser_pass": result["passed"],
-                "checks": result["checks"],
-                "generated_chars": len(html)
-            })
-            print("Minesweeper browser acceptance attempt", revision, "PASS" if result["passed"] else "FAIL", flush=True)
-            if result["passed"] or revision == 2:
-                break
-            failures = [c["id"] + ": " + c["detail"] for c in result["checks"] if not c["passed"]]
-            repair_prompt = (
-                "Repair this existing single-file HTML Minesweeper game. Return the COMPLETE corrected "
-                "standalone HTML/CSS/JavaScript file, not an explanation. Keep a 9x9 board with visible "
-                "clickable tiles, no game-over at startup, functional clicks, flags, restart and timer.\n"
-                "Browser acceptance failures:\n" + "\n".join(failures) + "\n"
-                "Previous source:\n" + html[:7300]
-            )
-            repaired = request_json(base + "/v1/chat/completions", {
-                "model": "localforge-smoke",
-                "messages": [{"role": "system", "content": system},
-                             {"role": "user", "content": repair_prompt}],
-                "stream": False, "max_tokens": 3072, "temperature": 0.1
-            }, timeout=800)
-            final_reply = repaired["choices"][0]["message"].get("content") or ""
-            output.append("REPAIR " + str(revision+1) + "\n" + final_reply)
-            OUTPUT.write_text("\n\n".join(output), encoding="utf-8")
-        (ROOT / "web-quality-artifacts/model-repair-metrics.json").write_text(
-            json.dumps({"model": "Qwen2.5-Coder-1.5B-Instruct Q4_K_M",
-                        "runs": model_trials,
-                        "first_pass": bool(model_trials and model_trials[0].get("browser_pass")),
-                        "final_pass": bool(model_trials and model_trials[-1].get("browser_pass"))}, indent=2))
-        print("Real-model browser repair trials recorded:", len(model_trials), flush=True)
+            report = data["result"]
+            result["browser_pass"] = report["passed"]
+            result["checks"] = report["checks"]
+        else:
+            result["reason"] = "First-pass output did not contain a complete HTML document."
+        (ROOT / "web-quality-artifacts").mkdir(exist_ok=True)
+        (ROOT / "web-quality-artifacts/model-first-pass-metrics.json").write_text(
+            json.dumps(result, indent=2), encoding="utf-8")
+        print("First-pass browser acceptance:",
+              "PASS" if result["browser_pass"] else "FAIL", flush=True)
+
     finally:
         process.terminate()
         try:
