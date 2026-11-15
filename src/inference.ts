@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { CatalogModelId } from "./modelCatalog";
 
 export type EngineStatus = { running: boolean; model: string | null; generating: boolean };
 export type ModelInfo = { installed: boolean; path: string; size: number };
@@ -12,8 +13,8 @@ export const emptyStatus: EngineStatus = { running: false, model: null, generati
 export const emptyModel: ModelInfo = { installed: false, path: "", size: 0 };
 export const native = isTauri;
 export const getStatus = () => invoke<EngineStatus>("engine_status");
-export const getModelInfo = () => invoke<ModelInfo>("model_info");
-export const downloadModel = () => invoke<ModelInfo>("download_model");
+export const getModelInfo = (modelId: CatalogModelId, downloadDir: string | null) => invoke<ModelInfo>("model_info", { modelId, downloadDir });
+export const downloadModel = (modelId: CatalogModelId, downloadDir: string | null) => invoke<ModelInfo>("download_model", { modelId, downloadDir });
 export const startModel = (modelPath: string | null, threads: number, contextTokens: number) => invoke<EngineStatus>("start_model", { modelPath, threads, contextTokens });
 export const stopModel = () => invoke<EngineStatus>("stop_model");
 export const generate = (requestId: string, messages: GenerationMessage[], projectContext: string | null = null, codeOnly = false) => invoke<string>("generate", { requestId, messages, projectContext, codeOnly });
