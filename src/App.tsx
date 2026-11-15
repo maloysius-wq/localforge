@@ -259,10 +259,15 @@ export default function App() {
   }, [workspaceInitAttempt]);
 
   useEffect(() => {
-    localStorage.setItem("localforge.model-path.v1", JSON.stringify(modelPath));
-    localStorage.setItem("localforge.threads.v1", String(threads));
-    localStorage.setItem("localforge.context-tokens.v1", String(contextTokens));
-    localStorage.setItem("localforge.auto-load.v1", String(autoLoad));
+    try {
+      localStorage.setItem("localforge.model-path.v1", JSON.stringify(modelPath));
+      localStorage.setItem("localforge.threads.v1", String(threads));
+      localStorage.setItem("localforge.context-tokens.v1", String(contextTokens));
+      localStorage.setItem("localforge.auto-load.v1", String(autoLoad));
+    } catch {
+      // Settings can fail under a WebView storage quota without crashing the app.
+      setStorageWarning(true);
+    }
   }, [modelPath, threads, contextTokens, autoLoad]);
   useEffect(() => {
     try { localStorage.setItem("localforge.context-meter.v1", JSON.stringify(contextMeters)); } catch { /* Graceful when storage quota is full. */ }
