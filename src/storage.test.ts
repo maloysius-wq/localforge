@@ -18,6 +18,19 @@ describe("workspace persistence", () => {
     saveWorkspace(state, { setItem: (_key, value) => { saved = value; } });
     expect(loadWorkspace({ getItem: () => saved }).threads[0].messages[1].role).toBe("assistant");
   });
+  it("preserves optional elapsed generation times without changing old messages", () => {
+    const state = blankState();
+    state.threads.push({ id: "timed", title: "Build", projectId: null, createdAt: 1, updatedAt: 30,
+      messages: [
+        { id: "old", role: "assistant", content: "Old model response", createdAt: 2 },
+        { id: "timed", role: "assistant", content: "New model response", createdAt: 30, durationMs: 25_700 },
+      ] });
+    let saved = "";
+    expect(saveWorkspace(state, { setItem: (_key, data) => { saved = data; } })).toBe(true);
+    const messages = loadWorkspace({ getItem: () => saved }).threads[0].messages;
+    expect(messages[0].durationMs).toBeUndefined();
+    expect(messages[1].durationMs).toBe(25_700);
+  });
   it("rejects invalid documents", () => expect(loadWorkspace({ getItem: () => "{not-json" })).toEqual(blankState()));
   it("handles absent storage without throwing", () => expect(saveWorkspace(blankState(), { setItem: () => { throw Error("quota"); } })).toBe(false));
   it("ignores repeated paths across separator and case differences", () => {
