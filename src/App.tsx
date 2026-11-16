@@ -22,7 +22,8 @@ import { containsImplementation } from "./codeTasks";
 import { prepareGeneration } from "./conversationContext";
 import { ContextRing } from "./ContextRing";
 import { extractProposedFiles } from "./autoEdits";
-import { verifyFirstPassWeb, summarizeQuality, type WebCheckProgress } from "./verificationFlow";
+import { verifyFirstPassWeb, summarizeQuality } from "./verificationFlow";
+import { formatGenerationDuration } from "./generationTime";
 import { DEFAULT_CONTEXT_TOKENS, validContextTokens, contextBudget } from "./contextConfig";
 import { inspectProject, readProjectFile, applyProjectChange, undoProjectChange, applyProjectChanges, undoProjectChanges, suggestFilename,
   type ProjectSnapshot, type ProjectFile } from "./projectTools";
@@ -61,6 +62,18 @@ function MessageBody({ content, isAssistant, onPropose }: { content: string; isA
         }}>{copied === index ? "Copied" : "Copy code"}</button></div>
         <pre><code>{part.content}</code></pre>
       </div>)}</div>;
+}
+
+function WorkingTimer({ startedAt }: { startedAt: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 500);
+    return () => window.clearInterval(timer);
+  }, [startedAt]);
+  return <span className="generation-timer running" title="Elapsed time since the prompt was sent">
+    Working · {formatGenerationDuration(now - startedAt)}
+  </span>;
 }
 
 function ActivityItem({ event }: { event: EventLog }) {
@@ -173,7 +186,7 @@ function SettingsModal({ theme, setTheme, onClose, engine, model, progress, down
       <div className="settings-section"><h3>Privacy and safety</h3>
         <div className="setting-summary"><ShieldCheck size={18}/><div><strong>Your data stays on this computer</strong><span>Chats stay local. Your selected project can be inspected on request and edited only after approving each proposed file change. No shell execution. Update checks reach the official GitHub API on request.</span></div></div>
       </div>
-      <div className="settings-footer">LocalForge 0.3.10 · CPU coding workspace</div>
+      <div className="settings-footer">LocalForge 0.3.11 · CPU coding workspace</div>
     </section>
   </div>;
 }
@@ -217,7 +230,7 @@ export default function App() {
     return validContextTokens(n) ? n : DEFAULT_CONTEXT_TOKENS;
   });
   const [autoLoad, setAutoLoad] = useState(() => localStorage.getItem("localforge.auto-load.v1") !== "false");
-  const [fullscreen, setFullscreen] = useState(() => isTauri());
+  const [fullscreen, setFullscreen] = useState(false);
   const startupRef = useRef<Promise<[EngineStatus, ModelInfo]> | null>(null);
   const [generating, setGenerating] = useState(false);
   const [liveText, setLiveText] = useState("");
@@ -228,7 +241,6 @@ export default function App() {
   const [proposalBusy, setProposalBusy] = useState(false);
   const [batchProposal, setBatchProposal] = useState<{projectId:string;root:string;edits:{path:string;content:string;original:ProjectFile}[]} | null>(null);
   const [batchBusy, setBatchBusy] = useState(false);
-  const [webVerification, setWebVerification] = useState<Record<string,WebCheckProgress>>({});
   const [contextMeters, setContextMeters] = useState<Record<string,{used:number;max:number;kind:"prompt"|"total"}>>(() => {
     try { return JSON.parse(localStorage.getItem("localforge.context-meter.v1") || "{}"); } catch { return {}; }
   });
@@ -236,7 +248,7 @@ export default function App() {
     try { const value = localStorage.getItem("localforge.last-edit.v1"); return value ? JSON.parse(value) : null; } catch {return null;}
   });
   const canceledRef = useRef(false);
-  const pendingRef = useRef<{ requestId: string; threadId: string } | null>(null);
+  const pendingRef = useRef<{ requestId: string; threadId: string; startedAt: number } | null>(null);
   const activeProjectIdRef = useRef<string | null>(workspace.activeProjectId);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -346,6 +358,15 @@ export default function App() {
       if (!disposed && threadId) setContextMeters(old => ({...old,[threadId]:{used:value.usedTokens,max:value.maxTokens,kind:value.kind}}));
     }).then(off => { if (disposed) off(); else unsubscribe.push(off); });
     return () => { disposed = true; unsubscribe.forEach(off => off()); };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let mounted = true;
+    void getCurrentWindow().isFullscreen().then(value => {
+      if (mounted) setFullscreen(value);
+    }).catch(() => {});
+    return () => { mounted = false; };
   }, []);
 
   async function toggleFullscreen() {
@@ -573,11 +594,11 @@ export default function App() {
     });
     setDraft("");
     setBatchProposal(null);setProposal(null);
-    setWebVerification(old => { const next={...old}; delete next[threadId]; return next; });
     if (!engine.running) return;
     const requestId = newId();
+    const startedAt = Date.now();
     canceledRef.current = false;
-    pendingRef.current = { requestId, threadId };
+    pendingRef.current = { requestId, threadId, startedAt };
     setLiveText("");
     setGenerating(true);
     void (async () => {
@@ -605,8 +626,7 @@ export default function App() {
         // Exactly one model inference per user prompt: no code-format retry or repair prompt.
         const reply = await generate(requestId, codeMessages, projectContext, !!task);
         const verification = task?.target === "html" && !canceledRef.current
-          ? verifyFirstPassWeb(reply, task.originalRequest + "\n" + content,
-              status => setWebVerification(old => ({ ...old, [threadId]: status }))) : null;
+          ? verifyFirstPassWeb(reply, task.originalRequest + "\n" + content) : null;
         if (canceledRef.current) {
           setNotice("Generation stopped. No partial file was saved.");
           return;
@@ -621,7 +641,9 @@ export default function App() {
               + summarizeQuality(verification!.report) + "\n\nThis code has NOT been approved or written.\n\n" + reply
             : validated ? reply
             : "⚠ First-pass output did not contain a complete code implementation. No automatic retry was attempted.\n\n" + reply;
-          const answer: ChatMessage = { id: newId(), role: "assistant", content: finalText, createdAt: Date.now() };
+          const completedAt = Date.now();
+          const answer: ChatMessage = { id: newId(), role: "assistant", content: finalText,
+            createdAt: completedAt, durationMs: Math.max(0, completedAt - startedAt) };
           setWorkspace(state => record({ ...state, threads: state.threads.map(t => t.id === threadId
             ? { ...t, messages: [...t.messages, answer], updatedAt: Date.now() } : t) },
             validated ? "Local model response received" : "Local model returned no complete implementation"));
@@ -683,7 +705,7 @@ export default function App() {
         </div>)}
       </div>
       <div className="sidebar-footer">
-        <div className="sidebar-status"><span className="status-indicator"/><div><strong>{engine.running ? "CPU model ready" : "Model not loaded"}</strong><span>Offline coding · v0.3.10</span></div></div>
+        <div className="sidebar-status"><span className="status-indicator"/><div><strong>{engine.running ? "CPU model ready" : "Model not loaded"}</strong><span>Offline coding · v0.3.11</span></div></div>
         <button className="sidebar-settings" onClick={() => setSettingsOpen(true)}><Settings2 size={18}/> Settings <span>⌘,</span></button>
       </div>
     </aside>
@@ -707,28 +729,18 @@ export default function App() {
           <div className="conversation-intro"><div className="conversation-kicker"><MessageSquare size={15}/> CONVERSATION</div><h1>{activeThread.title}</h1><p>Started {dateLabel(activeThread.createdAt)} · Saved only on this device</p></div>
           {activeThread.messages.map(message => <article key={message.id} className={`chat-message ${message.role}`}>
             <div className="message-avatar">{message.role === "user" ? "Y" : <Code2 size={16}/>}</div>
-            <div className="message-content"><div className="message-header"><strong>{message.role === "user" ? "You" : "LocalForge"}</strong><time>{timeLabel(message.createdAt)}</time></div><MessageBody content={message.content} isAssistant={message.role === "assistant"}
+            <div className="message-content"><div className="message-header"><strong>{message.role === "user" ? "You" : "LocalForge"}</strong><time>{timeLabel(message.createdAt)}</time>
+              {message.role === "assistant" && typeof message.durationMs === "number" && Number.isFinite(message.durationMs) &&
+                <span className="generation-timer" title="Total time from sending the prompt until the response completed">Generated in {formatGenerationDuration(message.durationMs)}</span>}
+            </div><MessageBody content={message.content} isAssistant={message.role === "assistant"}
               onPropose={message.role === "assistant" ? proposeCode : undefined} /></div>
           </article>)}
-          {generating && pendingRef.current?.threadId === activeThread.id && <article className="chat-message assistant" aria-live="polite"><div className="message-avatar"><Code2 size={16}/></div><div className="message-content"><div className="message-header"><strong>LocalForge · generating</strong></div><MessageBody content={liveText || "Thinking on your CPU…"} isAssistant /></div></article>}
+          {generating && pendingRef.current?.threadId === activeThread.id && <article className="chat-message assistant" aria-live="polite"><div className="message-avatar"><Code2 size={16}/></div><div className="message-content"><div className="message-header"><strong>LocalForge · generating</strong><WorkingTimer key={pendingRef.current.requestId} startedAt={pendingRef.current.startedAt}/></div><MessageBody content={liveText || "Thinking on your CPU…"} isAssistant /></div></article>}
           {!engine.running && activeThread.messages.at(-1)?.role === "user" && <div className="offline-response"><Info size={17}/><div><strong>Prompt saved. No response generated.</strong><p>Open Settings, download a GGUF model and load it to enable real offline chat.</p></div></div>}
         </div> : <EmptyChat project={activeProject} onPrompt={prompt => { setDraft(prompt); textareaRef.current?.focus(); }}/>}</div>
       <div className="composer-area">
-        {activeThread && webVerification[activeThread.id] && webVerification[activeThread.id].phase !== "not-applicable" && <div className={"web-verification " + webVerification[activeThread.id].phase} role="status">
-          <div className="web-verification-title"><ShieldCheck size={15}/>
-            <strong>{webVerification[activeThread.id].phase === "checking" ? "Checking generated source…" :
-              webVerification[activeThread.id].phase === "static-pass" ? "First-pass checks passed, browser behavior untested" :
-              "First-pass checks failed, no automatic retry or file changes"}</strong>
-            <span>1 model response</span>
-          </div>
-          {webVerification[activeThread.id].report && <details className="web-verification-details" open={webVerification[activeThread.id].phase === "failed"}>
-            <summary>View {webVerification[activeThread.id].report!.checks.length} source checks</summary>
-            <ul>{webVerification[activeThread.id].report!.checks.map(check=><li key={check.id}>
-              <span>{check.passed?"✓":"✗"}</span> <strong>{check.label}</strong>{!check.passed && " · " + check.detail}
-            </li>)}</ul>
-            <small>This is a static inspection. Running browser interactions and confirming gameplay require separate tests.</small>
-          </details>}
-        </div>}
+        {/* First-pass source checks remain an internal safety gate. Failures are explained
+            in the assistant message; no persistent checklist obscures the composer. */}
         <form onSubmit={onSubmit} className="composer">
         <textarea ref={textareaRef} rows={2} value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={onComposerKeyDown} placeholder="Describe what you'd like to build…" aria-label="Message" />
         <div className="composer-bottom"><div className="composer-meta">
@@ -768,7 +780,7 @@ export default function App() {
             </> : <div className="detail-empty"><Folder size={24}/><p>No project selected</p><span>Add a project folder to associate conversations with real work.</span><button onClick={addProject}>Choose folder <ArrowRight size={14}/></button></div>}</div>
         </>}
       </div>
-      <div className="detail-footer"><div><span className="footer-small-dot"/> Local-first workspace</div><span>0.3.10</span></div>
+      <div className="detail-footer"><div><span className="footer-small-dot"/> Local-first workspace</div><span>0.3.11</span></div>
     </aside>}
     {(notice || storageWarning || preferencesWarning) && <div className="toast" role="alert"><Info size={17}/><span>{storageWarning ? (isTauri() ? "Unable to save the native workspace database. New changes may not survive restarting the app." : "Local storage is unavailable or full. Changes may not survive restarting the app.") : preferencesWarning ? "Some model preferences could not be saved in WebView storage. Your conversations use the separate native database." : notice}</span><button aria-label="Dismiss notification" onClick={() => { setNotice(""); setStorageWarning(false); setPreferencesWarning(false); }}><X size={16}/></button></div>}
     {batchProposal && <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget && !batchBusy)setBatchProposal(null);}}>
