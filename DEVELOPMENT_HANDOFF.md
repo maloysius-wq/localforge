@@ -123,3 +123,10 @@ A pleasant GUI-first, offline CPU-only software-building workspace for older Win
 - Composer indicates one model response instead of showing repair counts. Static checks are not a substitute for a real browser runtime.
 - CI `scripts/model_smoke.py` now records one original model completion and one isolated browser evaluation (if an HTML document exists). A non-HTML or browser-failing output remains a recorded quality failure, not a reason to issue automated repair prompts or mark infrastructure smoke as broken. Artifacts: `web-quality-artifacts/model-first-pass-metrics.json` and original reply text.
 - To compare 1.5B, 3B and 4B fairly, benchmark on identical tasks and settings with no automated corrections. Native CPU startup and broader task testing remain pending.
+
+## v0.3.11: maximized startup, quiet source verification, response clock
+- `src-tauri/tauri.conf.json` now starts a maximized normal OS window (`maximized: true`, `fullscreen: false`). F11/header still optionally toggle true fullscreen; UI starts from non-fullscreen state and queries the actual native state.
+- Removed the permanently displayed source-verification checklist in the composer. Current first-pass-only mode still performs static inspections, refuses unsafe auto-staging, and includes failed checks in the assistant response. No automatic model repair or retries returned.
+- The streaming assistant header includes a lightweight elapsed timer (m:ss, h:mm:ss for long generations), beginning at Send and updating every 500 ms; it does not consume model inference, modify prompts, or trigger file writes.
+- Successful completed replies persist optional `durationMs` with their `ChatMessage` (unchanged version 1 workspace schema) and display final elapsed time. Older chat messages lack the field and remain readable. Errors/cancelled generations dismiss the live timer without fabricating a completed response.
+- New frontend tests cover maximized window defaults, elapsed-time formatting and persistence compatibility. Full installed Windows/Linux window-launch and timing behavior still need field validation.
