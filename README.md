@@ -4,6 +4,13 @@
 
 LocalForge is an open-source project toward a compact, shared coding model with Python, web, desktop, mobile, and eventually pixel-art specialties. The interface resembles a desktop coding agent, but the initial releases deliberately add capabilities one by one with clear status reporting and local privacy safeguards.
 
+## v0.3.11: maximized desktop, unobtrusive checks, response timer
+
+- Start the desktop window **maximized, not fullscreen**, so the normal operating-system title bar and taskbar remain available. F11 and the header button still allow optional fullscreen.
+- Remove the persistent source-check panel above the message composer when automated repair is disabled. First-pass static inspection and its code-staging safety gate remain active; failed checks still appear in the answer, not in an uncloseable overlay.
+- Show a live **Working · m:ss** timer at the top of the streaming model response, starting when the prompt is sent, and a **Generated in m:ss** duration on completed answers. Completed response durations are stored as optional v1 message metadata without disturbing earlier conversations.
+- No changes to offline CPU-only inference, explicit project-file review/approval, undo, or the one-pass benchmark.
+
 ## v0.3.10: first-pass-only code generation
 
 - Each user request now produces **one** local model completion. LocalForge no longer sends a follow-up prompt when the output has no code or when HTML static checks fail.
