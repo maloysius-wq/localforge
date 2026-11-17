@@ -4,6 +4,8 @@ use std::{fs, path::{Path, PathBuf}};
 use tauri::{AppHandle, Manager};
 
 pub(crate) const DEFAULT_ID: &str = "qwen25-coder-15b";
+pub(crate) const BONSAI_ID: &str = "bonsai-27b-q1";
+pub(crate) const BONSAI_SHA256: &str = "17ef842e47450caeb8eaa3ebfbbab5d2f2278b62b79be107985fb69a2f819aa0";
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ModelSpec {
     pub(crate) id: &'static str,
@@ -35,7 +37,13 @@ pub(crate) fn spec(id: Option<&str>) -> Result<ModelSpec, String> {
             url: "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
             min_bytes: 2_000_000_000, max_bytes: 3_100_000_000,
         }),
-        _ => Err("Unknown model. Select one of the three supported catalog entries.".into()),
+        BONSAI_ID => Ok(ModelSpec {
+            id: BONSAI_ID,
+            filename: "Bonsai-27B-Q1_0.gguf",
+            url: "https://huggingface.co/prism-ml/Bonsai-27B-gguf/resolve/main/Bonsai-27B-Q1_0.gguf",
+            min_bytes: 3_800_000_000, max_bytes: 3_810_000_000,
+        }),
+        _ => Err("Unknown model. Select one of the four supported catalog entries.".into()),
     }
 }
 
@@ -78,7 +86,7 @@ mod tests {
     #[test]
     fn only_preapproved_https_model_sources_can_be_selected() {
         assert_eq!(spec(None).unwrap().id, DEFAULT_ID);
-        for id in [DEFAULT_ID, "qwen25-coder-3b", "qwen3-4b-instruct-2507"] {
+        for id in [DEFAULT_ID, "qwen25-coder-3b", "qwen3-4b-instruct-2507", BONSAI_ID] {
             let item = spec(Some(id)).unwrap();
             assert!(item.url.starts_with("https://huggingface.co/"));
             assert!(item.url.ends_with(item.filename));
@@ -86,6 +94,12 @@ mod tests {
         }
         assert!(spec(Some("https://evil.example/gguf")).is_err());
         assert!(spec(Some("../../somewhere")).is_err());
+    }
+    #[test]
+    fn pinned_bonsai_identity() {
+        let model = spec(Some(BONSAI_ID)).unwrap();
+        assert_eq!(model.filename, "Bonsai-27B-Q1_0.gguf");
+        assert_eq!(BONSAI_SHA256.len(), 64);
     }
     #[test]
     fn chosen_external_folder_must_exist_and_be_a_folder() {
