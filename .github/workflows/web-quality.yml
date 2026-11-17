@@ -1,6 +1,12 @@
 name: Verify HTML game browser regression
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'benchmarks/**'
+      - 'scripts/web_acceptance.mjs'
+      - '.github/workflows/web-quality.yml'
   pull_request:
     paths:
       - 'src/webQuality.ts'

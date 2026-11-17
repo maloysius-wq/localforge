@@ -42,9 +42,11 @@ async function browserCheck(path){
     let tileSelector=null, tiles=0;
     for(const selector of selectors){
       const count=await page.locator(selector).count();
-      if(count>=9){tileSelector=selector;tiles=count;break;}
+      // Prefer a full 9x9 board, but report partial grids accurately.
+      if(count>tiles){tileSelector=selector;tiles=count;}
+      if(count===81){tileSelector=selector;tiles=count;break;}
     }
-    checks.push(check("tiles-render",tiles>=9,"Tile DOM nodes found: "+tiles));
+    checks.push(check("tiles-render",tiles===81,"9x9 Minesweeper requires exactly 81 tiles; found: "+tiles));
     const visible=tileSelector ? await page.locator(tileSelector).evaluateAll(nodes=>
       nodes.filter(node=>{
         const rect=node.getBoundingClientRect();
@@ -52,9 +54,9 @@ async function browserCheck(path){
         return rect.width>=8 && rect.height>=8 && styles.display!=="none"
           && styles.visibility!=="hidden";
       }).length) : 0;
-    checks.push(check("tiles-visible",visible>=9,"Tiles with visible dimensions: "+visible));
+    checks.push(check("tiles-visible",visible===81,"Visible tiles: "+visible+" / 81"));
     let firstClicked=false,flagged=false,timerAdvances=false,restartWorks=false;
-    if(tileSelector && visible>=9 && checks[0].passed){
+    if(tileSelector && tiles===81 && visible===81 && checks[0].passed){
       const first=page.locator(tileSelector).first();
       const before=await first.evaluate(el=>({html:el.outerHTML,status:document.body.innerText}));
       await first.click({timeout:3000});
@@ -85,7 +87,7 @@ async function browserCheck(path){
       }
       checks.push(check("timer",timerAdvances,timerAdvances?"Timer advanced":"Timer did not advance after a safe first click"));
     }else{
-      checks.push(check("first-click",false,visible<9?"Tile elements have zero/hidden dimensions":"Game was already over before the first click"));
+      checks.push(check("first-click",false,tiles!==81?"Requires 81 cells in a 9x9 board":visible!==81?"Some tiles are missing or hidden":"Game was already over before the first click"));
       checks.push(check("right-click-flag",false,"No visible playable tile was available"));
       checks.push(check("timer",false,"Cannot start the game without visible interactive tiles"));
     }
@@ -96,7 +98,7 @@ async function browserCheck(path){
       const count=tileSelector?await page.locator(tileSelector).count():0;
       const text=await page.locator("body").innerText();
       const flaggedCells=await page.locator(".flagged,.flag").count();
-      restartWorks=count>=9 && !/\b(game over|you lose|you lost)\b/i.test(text) && flaggedCells===0;
+      restartWorks=count===81 && !/\b(game over|you lose|you lost)\b/i.test(text) && flaggedCells===0;
     }
     checks.push(check("restart",restartWorks,restartWorks?"Restart reset the board":"Restart not working or missing"));
     checks.push(check("javascript-errors",errors.length===0,errors.length?errors.join("; "):"No uncaught script errors"));
@@ -115,12 +117,15 @@ if(mode==="--fixtures"){
   const good=await browserCheck("benchmarks/fixtures/minesweeper-good.html");
   const broken=await browserCheck("benchmarks/fixtures/minesweeper-broken.html");
   const invisible=await browserCheck("benchmarks/fixtures/minesweeper-invisible.html");
-  const result={time:new Date().toISOString(),fixtures:{good,broken,invisible},checks:["good must pass","reported empty-board regression must fail","invisible tiles/undefined helper regression must fail"]};
+  const small=await browserCheck("benchmarks/fixtures/minesweeper-small.html");
+  const smallRejectedForSize=small.checks.some(c=>c.id==="tiles-render" && !c.passed);
+  const result={time:new Date().toISOString(),fixtures:{good,broken,invisible,small},checks:["good must pass","reported empty-board regression must fail","invisible tiles/undefined helper regression must fail","playable 3x3 grid must be rejected for wrong tile count"]};
   await writeFile(resolve(outputDir,"fixtures-report.json"),JSON.stringify(result,null,2));
-  console.log(JSON.stringify({good:good.passed,broken:broken.passed,invisible:invisible.passed,
+  console.log(JSON.stringify({good:good.passed,broken:broken.passed,invisible:invisible.passed,small:small.passed,
     goodChecks:good.checks,brokenFailures:broken.checks.filter(c=>!c.passed),
-    invisibleFailures:invisible.checks.filter(c=>!c.passed)},null,2));
-  if(!good.passed || broken.passed || invisible.passed){
+    invisibleFailures:invisible.checks.filter(c=>!c.passed),
+    smallFailures:small.checks.filter(c=>!c.passed)},null,2));
+  if(!good.passed || broken.passed || invisible.passed || small.passed || !smallRejectedForSize){
     console.error("Browser verifier failed its positive/negative control fixtures");
     process.exitCode=1;
   }
