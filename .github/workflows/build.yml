@@ -57,6 +57,8 @@ jobs:
       - run: npm install --no-audit --no-fund
       - name: Prepare verified CPU-only llama.cpp runtime
         run: python scripts/prepare_runtime.py
+      - name: Stage verified experimental NVIDIA CUDA runtime
+        run: python scripts/prepare_gpu_runtime.py
       - name: Test Rust app and workspace migrations
         run: cargo test --manifest-path src-tauri/Cargo.toml
       - name: Package PR preview installers

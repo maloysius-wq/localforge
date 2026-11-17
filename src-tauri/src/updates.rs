@@ -10,7 +10,8 @@ use tokio::io::AsyncWriteExt;
 
 const RELEASE_API: &str = "https://api.github.com/repos/maloysius-wq/localforge/releases/latest";
 const RELEASES_PAGE: &str = "https://github.com/maloysius-wq/localforge/releases/latest";
-const MAX_INSTALLER_BYTES: u64 = 200 * 1024 * 1024;
+// Larger optional CUDA runtime bundled in the Windows package.
+const MAX_INSTALLER_BYTES: u64 = 1_200 * 1024 * 1024;
 #[derive(Deserialize)]
 struct Release { tag_name: String, body: Option<String>, html_url: String, assets: Vec<Asset> }
 #[derive(Deserialize)]
