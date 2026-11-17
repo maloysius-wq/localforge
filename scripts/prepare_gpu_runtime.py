@@ -42,8 +42,8 @@ def main():
             for member in archive.infolist():
                 if member.is_dir() or not permitted(member.filename):
                     continue
-                if member.file_size > 700_000_000:
-                    raise RuntimeError("Unexpectedly large CUDA runtime file")
+                if member.file_size > 2_500_000_000:
+                    raise RuntimeError(f"Unexpectedly large CUDA runtime file: {member.filename} ({member.file_size} bytes)")
                 base = pathlib.PurePosixPath(member.filename.replace("\\", "/")).name
                 dest = DEST / base
                 content = archive.read(member)
