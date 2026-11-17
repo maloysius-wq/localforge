@@ -2,6 +2,7 @@ mod workspace;
 mod model_catalog;
 mod workspace_db;
 mod updates;
+mod gpu_diagnostics;
 use futures_util::StreamExt;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -337,7 +338,8 @@ async fn start_model(app: AppHandle, engine: State<'_, Engine>, model_path: Opti
     let key = uuid::Uuid::new_v4().to_string();
     let log_dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
     fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
-    let log = File::create(log_dir.join("llama-server.log")).map_err(|e| e.to_string())?;
+    let log_path = log_dir.join("llama-server.log");
+    let log = File::create(&log_path).map_err(|e| e.to_string())?;
     {
         let mut inner = engine.inner.lock().unwrap_or_else(|p| p.into_inner());
         if inner.process.is_some() { return Err("Unload the current model first".into()); }
@@ -379,19 +381,51 @@ async fn start_model(app: AppHandle, engine: State<'_, Engine>, model_path: Opti
     // Distinguish successful process creation from a loaded, responding model.
     let client = reqwest::Client::builder().timeout(Duration::from_secs(3)).build().map_err(|e| e.to_string())?;
     for _ in 0..480 {
-        if !engine.status().running { return Err(format!(
-            "{selected_backend} model process exited before readiness. Check the runtime log. For GTX 1060, verify Pascal sm_61 CUDA support, driver compatibility and free VRAM."
-        )); }
+        if !engine.status().running {
+            let logs = fs::read_to_string(&log_path).unwrap_or_default();
+            return Err(format!(
+                "{selected_backend} model exited before becoming ready. GPU diagnostic: {}. Full runtime log: {}. Check NVIDIA driver, CUDA support and free GPU memory.",
+                gpu_diagnostics::summary(&logs), log_path.display()
+            ));
+        }
         if let Ok(resp) = client.get(format!("http://127.0.0.1:{port}/health"))
             .bearer_auth(&key).send().await {
             if resp.status().is_success() {
                 if selected_backend == "cuda" {
-                    let logs = fs::read_to_string(log_dir.join("llama-server.log")).unwrap_or_default();
-                    if !logs.contains("CUDA") || !logs.to_lowercase().contains("offload")
-                        || logs.contains("offloaded 0/") {
-                        let _ = engine.stop();
-                        return Err("GPU layer offload was not confirmed; refusing an unreported CPU fallback. Inspect runtime log and GTX 1060 driver.".into());
+                    // /health only proves a responding HTTP server. Windows may
+                    // flush the native loader log AFTER that response, so do not
+                    // reject a healthy GPU process based on one immediate read.
+                    for _ in 0..60 {
+                        if !engine.status().running {
+                            let logs = fs::read_to_string(&log_path).unwrap_or_default();
+                            return Err(format!(
+                                "Bonsai CUDA server exited after health check. GPU diagnostic: {}. Full runtime log: {}.",
+                                gpu_diagnostics::summary(&logs), log_path.display()
+                            ));
+                        }
+                        let logs = fs::read_to_string(&log_path).unwrap_or_default();
+                        match gpu_diagnostics::assess(&logs) {
+                            gpu_diagnostics::OffloadEvidence::Confirmed { .. } =>
+                                return Ok(engine.status()),
+                            gpu_diagnostics::OffloadEvidence::CpuFallback { total } => {
+                                let _ = engine.stop();
+                                return Err(format!(
+                                    "Bonsai loaded but reported 0/{total} GPU layers. This is a real CPU fallback, not CUDA inference. Full runtime log: {}.",
+                                    log_path.display()
+                                ));
+                            }
+                            gpu_diagnostics::OffloadEvidence::Pending
+                            | gpu_diagnostics::OffloadEvidence::DeviceUnconfirmed { .. } => {}
+                        }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
                     }
+                    let logs = fs::read_to_string(&log_path).unwrap_or_default();
+                    let description = gpu_diagnostics::summary(&logs);
+                    let _ = engine.stop();
+                    return Err(format!(
+                        "Bonsai responded, but GPU execution could not be verified. {description}. Full runtime log: {}. Please share this log to identify the exact CUDA or offload issue.",
+                        log_path.display()
+                    ));
                 }
                 return Ok(engine.status());
             }
@@ -399,7 +433,13 @@ async fn start_model(app: AppHandle, engine: State<'_, Engine>, model_path: Opti
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
     let _ = engine.stop();
-    Err(format!("Model did not become ready in 120 seconds (file size {size} bytes). Try fewer threads or inspect the runtime log"))
+    {
+        let logs = fs::read_to_string(&log_path).unwrap_or_default();
+        Err(format!(
+            "{selected_backend} model did not become ready in 120 seconds (file size {size} bytes). GPU diagnostic: {}. Full runtime log: {}.",
+            gpu_diagnostics::summary(&logs), log_path.display()
+        ))
+    }
 }
 fn model_path_default(app: &AppHandle) -> Result<PathBuf, String> {
     model_catalog::destination(app, model_catalog::spec(None)?, None)
