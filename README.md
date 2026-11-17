@@ -1,8 +1,18 @@
 # LocalForge
 
-**A CPU-only, offline-first coding workspace for ordinary computers.**
+**An offline-first coding workspace for ordinary computers, with optional experimental NVIDIA GPU inference on Windows.**
 
 LocalForge is an open-source project toward a compact, shared coding model with Python, web, desktop, mobile, and eventually pixel-art specialties. The interface resembles a desktop coding agent, but the initial releases deliberately add capabilities one by one with clear status reporting and local privacy safeguards.
+
+## v0.3.12: experimental Bonsai 27B NVIDIA GPU option (Windows)
+
+- Settings → Local inference offers **Bonsai 27B 1-bit (Prism ML, Apache 2.0)** in addition to the three CPU-only models. The default remains Qwen2.5-Coder 1.5B on the CPU. Existing chats and downloaded GGUF files are not modified.
+- Bonsai is an explicit, **manual-load** option. It does not auto-load on startup; it requires Windows x64, an NVIDIA CUDA 12.4-compatible driver and the separately bundled PrismML CUDA runtime. The frontend restricts Bonsai to a 4,096-token window. On Linux, this experimental backend reports an actionable unsupported-platform error rather than launching another executable.
+- The model download remains user-triggered, from the official [Prism ML Bonsai GGUF](https://huggingface.co/prism-ml/Bonsai-27B-gguf), with its published **SHA-256 pinned**. The actual GGUF is hashed again before GPU launch, including manually selected copies. Model downloads never overwrite existing files.
+- Windows installers stage two **SHA-256 pinned PrismML release archives** in a separate `runtime-cuda/` folder at GitHub Actions packaging time. Users do not download runtimes or use a command line. CPU libraries stay isolated in `runtime/`; the GPU launcher cannot load an arbitrary executable.
+- GPU mode requests 99 offload layers, 128/64 batch/microbatch, Flash Attention off and the CUDA0 device. Native launch refuses an unconfirmed GPU-offload result instead of silently using the CPU. Localhost API keys, one-slot server ownership, cancellation, Windows update DLL shutdown protection, code review and undo all remain unchanged.
+- **Hardware test still required:** the stock PrismML Windows CUDA 12.4 prebuild may not include Pascal `sm_61` kernels for a GTX 1060. Packaging and unit tests cannot confirm GTX 1060 offload. Also verify available VRAM and driver version. GPU performance and comparative coding quality are not yet established for LocalForge.
+- Due to the bundled CUDA binaries, the Windows installer is larger than prior releases. For older machines, stay with CPU models and normal start-up. No GPU mode is triggered automatically.
 
 ## v0.3.11: maximized desktop, unobtrusive checks, response timer
 
