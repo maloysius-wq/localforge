@@ -79,6 +79,7 @@ struct Inner {
     key: Option<String>,
     model: Option<String>,
     context_tokens: Option<u32>,
+    backend: Option<String>,
     generating: bool,
     cancel: Option<Arc<AtomicBool>>,
 }
@@ -88,6 +89,7 @@ struct Status {
     running: bool,
     model: Option<String>,
     generating: bool,
+    backend: Option<String>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -119,10 +121,11 @@ impl Engine {
                 inner.key = None;
                 inner.model = None;
                 inner.context_tokens = None;
+                inner.backend = None;
                 inner.generating = false;
             }
         }
-        Status { running: inner.process.is_some(), model: inner.model.clone(), generating: inner.generating }
+        Status { running: inner.process.is_some(), model: inner.model.clone(), generating: inner.generating, backend: inner.backend.clone() }
     }
     // Await the actual process exit before allowing an installer to replace
     // any llama.cpp DLLs. The installer must not start if shutdown fails.
@@ -145,6 +148,7 @@ impl Engine {
         inner.key = None;
         inner.model = None;
         inner.context_tokens = None;
+        inner.backend = None;
         inner.generating = false;
         Ok(())
     }
@@ -214,6 +218,9 @@ async fn download_model(app: AppHandle, engine: State<'_, Engine>,
         if sha.len() != 64 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err("The model host did not provide a verifiable SHA-256. Download refused.".into());
         }
+        if spec.id == model_catalog::BONSAI_ID && sha != model_catalog::BONSAI_SHA256 {
+            return Err("The Bonsai model SHA-256 changed upstream. Download refused until reviewed.".into());
+        }
         let expected_size = head.headers().get("x-linked-size")
             .and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<u64>().ok())
             .or_else(|| head.content_length())
@@ -273,17 +280,57 @@ async fn download_model(app: AppHandle, engine: State<'_, Engine>,
     model_info(app, model_id, download_dir)
 }
 
+
+fn check_bonsai_file(path: &Path, size: u64) -> Result<(), String> {
+    let spec = model_catalog::spec(Some(model_catalog::BONSAI_ID))?;
+    if path.file_name() != Some(std::ffi::OsStr::new(spec.filename))
+        || !(spec.min_bytes..=spec.max_bytes).contains(&size) {
+        return Err("Experimental CUDA is restricted to the official 1-bit Bonsai-27B-Q1_0.gguf.".into());
+    }
+    if !fs::symlink_metadata(path).map_err(|e| e.to_string())?.file_type().is_file() {
+        return Err("The Bonsai GGUF must be a regular file, not a symlink.".into());
+    }
+    let mut file = File::open(path).map_err(|e| e.to_string())?;
+    let mut digest = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 { break; }
+        digest.update(&buf[..n]);
+    }
+    if format!("{:x}", digest.finalize()) != model_catalog::BONSAI_SHA256 {
+        return Err("Bonsai GGUF failed the official SHA-256 check. Download the original from Prism ML.".into());
+    }
+    Ok(())
+}
+fn validate_backend(backend: Option<&str>, context: u32) -> Result<&'static str, String> {
+    match backend.unwrap_or("cpu") {
+        "cpu" => Ok("cpu"),
+        "cuda" if !cfg!(windows) => Err("Experimental Bonsai CUDA currently requires Windows x64.".into()),
+        "cuda" if context != 4096 => Err("Bonsai GPU mode is validated only with a 4096-token context. Change this in Settings.".into()),
+        "cuda" => Ok("cuda"),
+        _ => Err("Invalid inference backend.".into()),
+    }
+}
 #[tauri::command]
-async fn start_model(app: AppHandle, engine: State<'_, Engine>, model_path: Option<String>, threads: u8, context_tokens: u32) -> Result<Status, String> {
+async fn start_model(app: AppHandle, engine: State<'_, Engine>, model_path: Option<String>, threads: u8, context_tokens: u32, backend: Option<String>) -> Result<Status, String> {
     if !(1..=16).contains(&threads) { return Err("Threads must be between 1 and 16".into()); }
     if !valid_context(context_tokens) { return Err("Invalid context window selection".into()); }
     let path = match model_path { Some(p) if !p.trim().is_empty() => PathBuf::from(p), _ => model_path_default(&app)? };
     let size = check_gguf(&path)?;
-    let runtime = app.path().resource_dir().map_err(|e| e.to_string())?.join("runtime");
+    let selected_backend = validate_backend(backend.as_deref(), context_tokens)?;
+    if selected_backend == "cuda" {
+        check_bonsai_file(&path, size)?;
+    } else if path.file_name() == Some(std::ffi::OsStr::new("Bonsai-27B-Q1_0.gguf")) {
+        return Err("Bonsai 27B needs explicit experimental NVIDIA CUDA selection; CPU remains the default.".into());
+    }
+    let runtime = app.path().resource_dir().map_err(|e| e.to_string())?
+        .join(if selected_backend == "cuda" { "runtime-cuda" } else { "runtime" });
     let executable = runtime.join(if cfg!(windows) { "llama-server.exe" } else { "llama-server" });
-    if !executable.exists() { return Err("Bundled CPU runtime is missing. Please reinstall from the official LocalForge build".into()); }
-    // Limit configuration to one inference slot and a short context on low-RAM systems.
-    // The application does not pass -ngl > 0 or enable GPU backends.
+    if !executable.is_file() {
+        return Err(format!("The bundled {selected_backend} runtime is missing. Install a verified LocalForge release."));
+    }
+    // Never launch a user-supplied executable. CPU always uses zero GPU layers.
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     drop(listener);
@@ -303,8 +350,14 @@ async fn start_model(app: AppHandle, engine: State<'_, Engine>, model_path: Opti
         command.current_dir(runtime)
             .arg("--model").arg(&path).arg("--host").arg("127.0.0.1")
             .arg("--port").arg(port.to_string()).arg("--ctx-size").arg(context_tokens.to_string())
-            .arg("--threads").arg(threads.to_string()).arg("--n-gpu-layers").arg("0")
+            .arg("--threads").arg(threads.to_string()).arg("--n-gpu-layers")
+            .arg(if selected_backend == "cuda" { "99" } else { "0" })
             .arg("--parallel").arg("1").arg("--api-key").arg(&key);
+        if selected_backend == "cuda" {
+            // 6GB Pascal baseline, with an explicit CUDA device (no silent CPU fallback).
+            command.arg("--batch-size").arg("128").arg("--ubatch-size").arg("64")
+                .arg("--flash-attn").arg("off").arg("--device").arg("CUDA0");
+        }
         // Qwen2.5-Coder-1.5B GGUF has native 32K context. 64K is
         // experimental YaRN extrapolation with no long-context guarantee.
         if context_tokens > NATIVE_QWEN_CONTEXT_TOKENS
@@ -315,20 +368,33 @@ async fn start_model(app: AppHandle, engine: State<'_, Engine>, model_path: Opti
         }
         let child = command
             .stdout(Stdio::from(log.try_clone().map_err(|e| e.to_string())?))
-            .stderr(Stdio::from(log)).spawn().map_err(|e| format!("Could not start CPU runtime: {e}"))?;
+            .stderr(Stdio::from(log)).spawn().map_err(|e| format!("Could not start {selected_backend} runtime: {e}"))?;
         inner.process = Some(child);
         inner.port = Some(port);
         inner.key = Some(key.clone());
         inner.model = Some(path.to_string_lossy().to_string());
         inner.context_tokens = Some(context_tokens);
+        inner.backend = Some(selected_backend.to_string());
     }
     // Distinguish successful process creation from a loaded, responding model.
     let client = reqwest::Client::builder().timeout(Duration::from_secs(3)).build().map_err(|e| e.to_string())?;
     for _ in 0..480 {
-        if !engine.status().running { return Err("Model process exited before it was ready. See the runtime log".into()); }
+        if !engine.status().running { return Err(format!(
+            "{selected_backend} model process exited before readiness. Check the runtime log. For GTX 1060, verify Pascal sm_61 CUDA support, driver compatibility and free VRAM."
+        )); }
         if let Ok(resp) = client.get(format!("http://127.0.0.1:{port}/health"))
             .bearer_auth(&key).send().await {
-            if resp.status().is_success() { return Ok(engine.status()); }
+            if resp.status().is_success() {
+                if selected_backend == "cuda" {
+                    let logs = fs::read_to_string(log_dir.join("llama-server.log")).unwrap_or_default();
+                    if !logs.contains("CUDA") || !logs.to_lowercase().contains("offload")
+                        || logs.contains("offloaded 0/") {
+                        let _ = engine.stop();
+                        return Err("GPU layer offload was not confirmed; refusing an unreported CPU fallback. Inspect runtime log and GTX 1060 driver.".into());
+                    }
+                }
+                return Ok(engine.status());
+            }
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
@@ -590,6 +656,15 @@ mod prompt_tests {
         assert_eq!(build_conversation(sample(), None, 65536).unwrap()[1]["content"].as_str().unwrap().len(), 42000);
     }
 
+    #[test]
+    fn cpu_default_and_opt_in_gpu_context_guard() {
+        assert_eq!(validate_backend(None, 6144).unwrap(), "cpu");
+        assert_eq!(validate_backend(Some("cpu"), 65536).unwrap(), "cpu");
+        assert!(validate_backend(Some("unknown"), 4096).is_err());
+        assert!(validate_backend(Some("cuda"), 6144).is_err());
+        if cfg!(windows) { assert_eq!(validate_backend(Some("cuda"), 4096).unwrap(), "cuda"); }
+        else { assert!(validate_backend(Some("cuda"), 4096).is_err()); }
+    }
     #[test]
     fn refuses_non_user_last_turn_and_oversize_prompts() {
         assert!(build_conversation(vec![ChatMessage { role:"assistant".into(), content:"hi".into() }], None, DEFAULT_CONTEXT_TOKENS).is_err());
