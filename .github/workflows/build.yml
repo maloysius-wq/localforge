@@ -6,6 +6,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Superseded pushes must not publish older installers over the latest build.
+concurrency:
+  group: localforge-build-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
