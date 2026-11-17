@@ -5,9 +5,9 @@ describe("bundled model catalog", () => {
   it("keeps the legacy model as the default", () => {
     expect(DEFAULT_MODEL_ID).toBe("qwen25-coder-15b");
   });
-  it("provides all three test candidates with their source and licenses", () => {
+  it("provides all CPU candidates plus opt-in Bonsai with sources and licenses", () => {
     expect(MODEL_CATALOG.map(model => model.id)).toEqual([
-      "qwen25-coder-15b", "qwen25-coder-3b", "qwen3-4b-instruct-2507",
+      "qwen25-coder-15b", "qwen25-coder-3b", "qwen3-4b-instruct-2507", "bonsai-27b-q1",
     ]);
     expect(MODEL_CATALOG.every(model => model.source && model.license)).toBe(true);
   });
