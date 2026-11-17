@@ -25,7 +25,7 @@ fn offload_count(line: &str) -> Option<(u32, u32)> {
     let (loaded, total) = count.trim().split_once('/')?;
     let loaded: u32 = loaded.parse().ok()?;
     let total: u32 = total.parse().ok()?;
-    if !suffix.is_empty() && !suffix.starts_with([' ', ',', ';', ')']) {
+    if suffix.chars().next().is_some_and(|ch| ![' ', ',', ';', ')'].contains(&ch)) {
         return None;
     }
     if total == 0 || loaded > total { return None; }
