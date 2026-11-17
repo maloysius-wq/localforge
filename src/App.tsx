@@ -15,7 +15,7 @@ import {
   type ChatMessage, type EventLog, type Project, type Thread, type WorkspaceState,
 } from "./storage";
 import { ModelManager } from "./ModelManager";
-import { DEFAULT_MODEL_ID, isCatalogModelId, type CatalogModelId } from "./modelCatalog";
+import { DEFAULT_MODEL_ID, isCatalogModelId, isGpuModel, type CatalogModelId } from "./modelCatalog";
 import { initializeNativeWorkspace, saveNativeWorkspace } from "./nativeWorkspace";
 import { splitCodeBlocks } from "./codeBlocks";
 import { containsImplementation } from "./codeTasks";
@@ -179,14 +179,14 @@ function SettingsModal({ theme, setTheme, onClose, engine, model, progress, down
           <button className={`theme-option ${theme === "light" ? "selected" : ""}`} onClick={() => setTheme("light")}><Sun size={19}/> Light {theme === "light" && <CheckCircle2 size={17}/>}</button>
         </div>
       </div>
-      <div className="settings-section"><h3>Local inference</h3><p>Download or select a GGUF model, then load it into memory. LocalForge bundles the CPU-only runtime with its installer.</p>
+      <div className="settings-section"><h3>Local inference</h3><p>Download or select a GGUF model, then load it into memory. The CPU runtime is always available; Windows builds also bundle an opt-in experimental NVIDIA CUDA runtime.</p>
         <ModelManager engine={engine} model={model} progress={progress} downloading={downloading} busy={modelBusy} modelPath={modelPath} modelId={modelId} setModelId={setModelId} downloadDir={downloadDir} chooseDownloadDir={chooseDownloadDir} resetDownloadDir={resetDownloadDir} threads={threads} setThreads={setThreads} contextTokens={contextTokens} setContextTokens={setContextTokens} autoLoad={autoLoad} setAutoLoad={setAutoLoad} onDownload={download} onLoad={load} onUnload={unload} onChoose={choose}/>
       </div>
       <div className="settings-section"><h3>Application updates</h3><UpdateSettings/></div>
       <div className="settings-section"><h3>Privacy and safety</h3>
         <div className="setting-summary"><ShieldCheck size={18}/><div><strong>Your data stays on this computer</strong><span>Chats stay local. Your selected project can be inspected on request and edited only after approving each proposed file change. No shell execution. Update checks reach the official GitHub API on request.</span></div></div>
       </div>
-      <div className="settings-footer">LocalForge 0.3.11 · CPU coding workspace</div>
+      <div className="settings-footer">LocalForge 0.3.12 · offline coding workspace</div>
     </section>
   </div>;
 }
@@ -336,11 +336,11 @@ export default function App() {
           const [status, info] = await startupRef.current!;
           if (disposed) return;
           setEngine(status); setModel(info);
-          if (autoLoad && !status.running && (info.installed || modelPath)) {
+          if (autoLoad && !isGpuModel(modelId) && !status.running && (info.installed || modelPath)) {
             setModelBusy(true);
             setNotice("Loading local CPU model automatically…");
             try {
-              const started = await startModel(modelPath || (info.installed ? info.path : null), threads, contextTokens);
+              const started = await startModel(modelPath || (info.installed ? info.path : null), threads, contextTokens, "cpu");
               if (!disposed) { setEngine(started); setNotice("Local CPU model loaded automatically."); }
             } catch (error) {
               if (!disposed) setNotice("Automatic model load failed. Open Settings to retry: " + String(error));
@@ -397,6 +397,7 @@ export default function App() {
   }, [modelId, downloadDir]);
 
   function selectCatalogModel(value: CatalogModelId) {
+    if (isGpuModel(value)) setContextTokens(4096);
     setModelId(value);
     setModelPath(null);
     setProgress(null);
@@ -433,8 +434,8 @@ export default function App() {
   async function handleLoadModel() {
     setModelBusy(true);
     try {
-      setEngine(await startModel(modelPath || (model.installed ? model.path : null), threads, contextTokens));
-      setNotice("CPU coding model loaded. Chat responses are now generated locally.");
+      setEngine(await startModel(modelPath || (model.installed ? model.path : null), threads, contextTokens, isGpuModel(modelId) ? "cuda" : "cpu"));
+      setNotice(isGpuModel(modelId) ? "Experimental Bonsai CUDA model loaded. Responses are generated locally using the GPU backend." : "CPU coding model loaded. Chat responses are now generated locally.");
     } catch (error) { setNotice(`Could not load model: ${String(error)}`); }
     finally {
       setModelBusy(false);

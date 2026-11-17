@@ -25,7 +25,16 @@ export const MODEL_CATALOG = [
     source: "Unsloth GGUF of Qwen's model",
     description: "Newer general instruct model; potentially better reasoning, heavier on RAM.",
   },
+  {
+    id: "bonsai-27b-q1",
+    label: "Bonsai 27B (1-bit)",
+    size: "~3.8 GB",
+    license: "Apache 2.0",
+    source: "Prism ML official GGUF",
+    description: "Experimental Windows NVIDIA CUDA option. Manually loaded, 4K context; 6GB GTX 1060 must be tested in person.",
+  },
 ] as const;
+export const isGpuModel = (id: CatalogModelId) => id === "bonsai-27b-q1";
 export type CatalogModelId = (typeof MODEL_CATALOG)[number]["id"];
 export const DEFAULT_MODEL_ID: CatalogModelId = "qwen25-coder-15b";
 export function isCatalogModelId(value: unknown): value is CatalogModelId {

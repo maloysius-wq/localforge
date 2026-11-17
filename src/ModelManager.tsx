@@ -1,7 +1,7 @@
 import { Cpu, Download, FolderOpen, HardDrive, LoaderCircle, Play, Square } from "lucide-react";
 import type { DownloadProgress, EngineStatus, ModelInfo } from "./inference";
 import { CONTEXT_CHOICES } from "./contextConfig";
-import { MODEL_CATALOG, type CatalogModelId } from "./modelCatalog";
+import { MODEL_CATALOG, isGpuModel, type CatalogModelId } from "./modelCatalog";
 
 export function ModelManager({ engine, model, progress, downloading, busy, modelPath, modelId, setModelId,
   downloadDir, chooseDownloadDir, resetDownloadDir, threads, setThreads, contextTokens, setContextTokens,
@@ -29,21 +29,23 @@ export function ModelManager({ engine, model, progress, downloading, busy, model
   onChoose: () => void;
 }) {
   const selected = modelPath || (model.installed ? model.path : null);
+  const gpu = isGpuModel(modelId);
   const selectedSpec = MODEL_CATALOG.find(choice => choice.id === modelId)!;
   const pct = progress?.total ? Math.floor((progress.received / progress.total) * 100) : 0;
   const gb = (bytes: number) => (bytes / (1024 ** 3)).toFixed(2) + " GiB";
   return <div className="model-manager">
-    <div className="model-setting-head"><Cpu size={18}/><div><strong>CPU-only local model</strong><span>{engine.running ? "Ready for offline coding chat" : "No model loaded"}</span></div>
+    <div className="model-setting-head"><Cpu size={18}/><div><strong>{engine.backend === "cuda" ? "NVIDIA CUDA model" : "Local model"}</strong><span>{engine.running ? "Ready for offline coding chat" : "No model loaded"}</span></div>
       <span className={engine.running ? "pill live" : "pill neutral"}>{engine.running ? "Running" : "Stopped"}</span></div>
     <div className="model-option">
       <label htmlFor="catalog-model"><strong>Model to test</strong></label>
       <p>Compare models without replacing or deleting the ones you already downloaded. Only one model runs at a time.</p>
       <select id="catalog-model" value={modelId} disabled={busy || downloading || engine.running}
         onChange={e => setModelId(e.target.value as CatalogModelId)}>
-        {MODEL_CATALOG.map(choice => <option key={choice.id} value={choice.id}>{choice.label} (Q4_K_M, {choice.size})</option>)}
+        {MODEL_CATALOG.map(choice => <option key={choice.id} value={choice.id}>{choice.label} ({choice.id === "bonsai-27b-q1" ? "Q1_0" : "Q4_K_M"}, {choice.size})</option>)}
       </select>
       <p>{selectedSpec.description} <strong>{selectedSpec.license}</strong> · {selectedSpec.source}.</p>
       {modelId === "qwen25-coder-3b" && <p className="model-caution" role="note">Research license: this candidate is for permitted noncommercial evaluation, not a default commercial distribution model.</p>}
+      {gpu && <p className="model-caution" role="note"><strong>Experimental NVIDIA CUDA 12.4, Windows x64 only.</strong> Requires a compatible NVIDIA driver, adequate free VRAM and the bundled Prism runtime. GTX 1060 Pascal support is not yet field-verified. No silent CPU fallback. Load manually, at 4,096 tokens.</p>}
     </div>
     <div className="model-option">
       <label><strong>Download folder</strong></label>
@@ -84,22 +86,22 @@ export function ModelManager({ engine, model, progress, downloading, busy, model
     </div>
     <div className="model-option">
       <label htmlFor="context-window"><strong>Context window</strong></label>
-      <p>More context retains more code and history, but increases RAM use and CPU prefill time. Unload the model to change it.</p>
+      <p>{gpu ? "Experimental Bonsai mode is restricted to 4,096 tokens on 6GB GPUs." : "More context retains more code and history, but increases RAM use and CPU prefill time. Unload the model to change it."}</p>
       <select id="context-window" value={contextTokens} disabled={busy || engine.running} onChange={e => setContextTokens(Number(e.target.value))}>
-        {CONTEXT_CHOICES.map(n => <option key={n} value={n}>{n.toLocaleString()} tokens{n === 65536 ? " (64K experimental on Qwen2.5)" : n === 6144 ? " (low-RAM default)" : ""}</option>)}
+        {CONTEXT_CHOICES.filter(n => !gpu || n === 4096).map(n => <option key={n} value={n}>{n.toLocaleString()} tokens{n === 65536 ? " (64K experimental on Qwen2.5)" : n === 6144 ? " (low-RAM default)" : ""}</option>)}
       </select>
       {contextTokens === 65536 && <p className="model-caution" role="note"><strong>64K caution:</strong> Qwen2.5-Coder requires experimental YaRN scaling above 32K. Large contexts can exhaust RAM. The 4B candidate has not been validated at this context.</p>}
       {engine.running && <small className="model-selected">Unload the model before changing the context window.</small>}
     </div>
-    <label className="model-autoload"><input type="checkbox" checked={autoLoad} onChange={e => setAutoLoad(e.target.checked)}/>
-      <span><strong>Load selected model when LocalForge opens</strong><small>Uses CPU and RAM on startup. Never automatically downloads missing models.</small></span></label>
+    <label className="model-autoload"><input type="checkbox" checked={autoLoad && !gpu} disabled={gpu} onChange={e => setAutoLoad(e.target.checked)}/>
+      <span><strong>Load selected model when LocalForge opens</strong><small>{gpu ? "Disabled for experimental GPU inference. Load Bonsai manually each session." : "Uses CPU and RAM on startup. Never automatically downloads missing models."}</small></span></label>
     <div className="model-action-row">
       {!engine.running
         ? <button type="button" className="model-action primary" onClick={onLoad} disabled={!selected || busy || downloading}>
           {busy ? <LoaderCircle size={15}/> : <Play size={15}/>} {busy ? "Loading model…" : "Load model"}</button>
         : <button type="button" className="model-action secondary" onClick={onUnload} disabled={busy || engine.generating}><Square size={15}/> Unload model</button>}
-      <span className="engine-hint"><HardDrive size={14}/> {contextTokens.toLocaleString()}-token context · GPU layers: 0</span>
+      <span className="engine-hint"><HardDrive size={14}/> {contextTokens.toLocaleString()}-token context · {gpu ? "GPU offload: 99 layers requested" : "GPU layers: 0"}</span>
     </div>
-    <p className="model-caution">Candidates run locally with the bundled CPU-only runtime. These are experimental quality comparisons, not verified app builders. Project file writes require approval; shell and app execution remain disabled.</p>
+    <p className="model-caution">CPU candidates use the original offline CPU runtime. Bonsai uses a separate experimental, bundled CUDA runtime on Windows only. These are not validated app builders. Project file writes still require approval; shell and app execution remain disabled.</p>
   </div>;
 }
