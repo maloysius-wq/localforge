@@ -84,6 +84,6 @@ jobs:
           workflowArtifactNamePattern: 'LocalForge-[platform]-[arch]-[bundle]'
           tagName: v__VERSION__
           releaseName: LocalForge v__VERSION__
-          releaseBody: 'LocalForge CPU-only desktop workspace. Installers are unsigned development releases. Download only from this official repository.'
+          releaseBody: 'LocalForge offline desktop coding workspace, with optional experimental Windows NVIDIA CUDA inference. Unsigned development installers. Download only from this official repository.'
           releaseDraft: false
           prerelease: false

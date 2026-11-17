@@ -4,6 +4,14 @@
 
 LocalForge is an open-source project toward a compact, shared coding model with Python, web, desktop, mobile, and eventually pixel-art specialties. The interface resembles a desktop coding agent, but the initial releases deliberately add capabilities one by one with clear status reporting and local privacy safeguards.
 
+## v0.3.14: fix Bonsai GPU logging level after GTX 1060 field log
+
+- Real Bonsai 27B startup logs from the GTX 1060 showed the PrismML server **loaded and listening** in about four seconds, but had **no native GPU device or model-layer allocation lines**. The runtime printed `verbosity = 3`.
+- Investigation of the exact PrismML source established that its `common_log_default_callback` maps model `GGML_LOG_LEVEL_INFO` to verbosity **4**, whereas the server's own `INFO` entries remain visible at 3. The existing GPU verifier correctly required an actual layer count, but the default log level silently suppressed that evidence. The earlier v0.3.13 fix waited for messages that could never appear.
+- GPU launch now adds **`--log-verbosity 4` only for the Bonsai CUDA backend**, the minimum setting needed to expose `CUDA0 model buffer size` and `offloaded N/M layers to GPU` log messages. The CPU path is unchanged. All model download hashes, GPU validation, localhost isolation and manual file-change approval safeguards remain intact.
+- Native tests include a sanitized example of the actual GTX 1060 log with no placement evidence at level 3 and expected positive CUDA layer evidence at level 4. If offload remains unavailable the existing error includes the actual log path; no CPU fallback is accepted as GPU success.
+- **Remaining real-world validation:** install v0.3.14, load Bonsai, confirm positive GPU offload in the log, and then compare inference speed/coding quality to the 4B model. Do not claim actual GTX 1060 GPU usage from the supplied v0.3.13 log.
+
 ## v0.3.13: fix false GPU-offload errors and add diagnostics
 
 - The Bonsai loader previously rejected a healthy GPU-backed server if a single immediate log read did not contain the exact strings `CUDA` and `offload`. This yielded the confusing "GPU layer offload was not confirmed" error reported on GTX 1060.

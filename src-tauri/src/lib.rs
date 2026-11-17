@@ -356,8 +356,13 @@ async fn start_model(app: AppHandle, engine: State<'_, Engine>, model_path: Opti
             .arg(if selected_backend == "cuda" { "99" } else { "0" })
             .arg("--parallel").arg("1").arg("--api-key").arg(&key);
         if selected_backend == "cuda" {
-            // 6GB Pascal baseline, with an explicit CUDA device (no silent CPU fallback).
-            command.arg("--batch-size").arg("128").arg("--ubatch-size").arg("64")
+            // PrismML's logging callback filters GGML_LOG_LEVEL_INFO at level 3.
+            // Actual CUDA model buffers and "offloaded N/M layers to GPU" are
+            // emitted at level 4 (trace), so verification was impossible before.
+            // Use only the minimum verbosity that exposes model placement; avoid
+            // --verbose (unbounded debug, including potentially sensitive data).
+            command.arg("--log-verbosity").arg(gpu_diagnostics::GPU_LOG_VERBOSITY)
+                .arg("--batch-size").arg("128").arg("--ubatch-size").arg("64")
                 .arg("--flash-attn").arg("off").arg("--device").arg("CUDA0");
         }
         // Qwen2.5-Coder-1.5B GGUF has native 32K context. 64K is

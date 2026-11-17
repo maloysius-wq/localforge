@@ -1,6 +1,9 @@
 //! Conservative, testable verification of actual llama.cpp CUDA offload.
 //! Health reports that an HTTP server responded, not that its layers run on GPU.
 //! Logs are native diagnostics only; never print the raw log or session API key.
+// PrismML common/log.cpp maps GGML_LOG_LEVEL_INFO -> LOG_LEVEL_TRACE (4), not 3.
+// Thus model offload reports are absent at the default verbosity of 3.
+pub(crate) const GPU_LOG_VERBOSITY: &str = "4";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OffloadEvidence {
@@ -90,6 +93,31 @@ mod tests {
         assert_eq!(assess(case_variant), OffloadEvidence::Confirmed { loaded: 48, total: 99 });
         let model_buffer = "llama_model_load: CUDA0 model buffer size = 3500.0 MiB\nload_tensors: offloaded 65/65 layers to GPU\n";
         assert_eq!(assess(model_buffer), OffloadEvidence::Confirmed { loaded: 65, total: 65 });
+    }
+
+    #[test]
+    fn field_log_is_incomplete_at_default_level_three() {
+        // Redacted exact shape of the user's Prism 1-bit Bonsai startup log.
+        // The HTTP server reports loaded and listening, but the default
+        // verbosity level 3 suppresses the native model placement messages.
+        let field_log = "0.00.250.661 I srv  llama_server: initializing ...\n\
+0.00.250.680 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)\n\
+0.00.260.039 I srv    load_model: loading model 'Bonsai-27B-Q1_0.gguf'\n\
+0.03.960.026 I cmn          init: llama threadpool init, n_threads = 4\n\
+0.04.361.414 I srv    load_model: initializing, n_slots = 1, n_ctx_slot = 4096, kv_unified = 'false'\n\
+0.04.372.540 I srv  server_run_i: model loaded\n\
+0.04.372.546 I srv  server_on_li: listening on http://127.0.0.1:62939\n";
+        assert_eq!(assess(field_log), OffloadEvidence::Pending);
+        assert_eq!(GPU_LOG_VERBOSITY, "4");
+    }
+
+    #[test]
+    fn exposes_gpu_placement_at_trace_level_four() {
+        let trace = "0.00.100 I cmn common_params_print_info: verbosity = 4\n\
+0.03.900 I llama_model_load: CUDA0 model buffer size = 3500.00 MiB\n\
+0.03.901 I llama_model_load: offloaded 65/65 layers to GPU\n\
+0.04.372 I srv server_run_i: model loaded\n";
+        assert_eq!(assess(trace), OffloadEvidence::Confirmed { loaded: 65, total: 65 });
     }
 
     #[test]
