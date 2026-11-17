@@ -12,6 +12,16 @@ on:
       - 'scripts/model_smoke.py'
       - '.github/workflows/model-smoke.yml'
   workflow_dispatch:
+    inputs:
+      model_id:
+        description: Allowlisted model for a single-pass CPU comparison
+        required: true
+        default: qwen25-coder-15b
+        type: choice
+        options:
+          - qwen25-coder-15b
+          - qwen25-coder-3b
+          - qwen3-4b-instruct-2507
 
 permissions:
   contents: read
@@ -20,7 +30,9 @@ jobs:
   model-smoke:
     name: Generate one-file HTML with CPU Qwen model
     runs-on: ubuntu-latest
-    timeout-minutes: 38
+    timeout-minutes: 55
+    env:
+      LOCALFORGE_SMOKE_MODEL_ID: ${{ inputs.model_id || 'qwen25-coder-15b' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,7 +52,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: localforge-cpu-model-smoke
+          name: localforge-cpu-${{ inputs.model_id || 'qwen25-coder-15b' }}-smoke
           if-no-files-found: warn
           path: |
             localforge-model-smoke-output.txt
