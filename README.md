@@ -4,6 +4,13 @@
 
 LocalForge is an open-source project toward a compact, shared coding model with Python, web, desktop, mobile, and eventually pixel-art specialties. The interface resembles a desktop coding agent, but the initial releases deliberately add capabilities one by one with clear status reporting and local privacy safeguards.
 
+## v0.3.13: fix false GPU-offload errors and add diagnostics
+
+- The Bonsai loader previously rejected a healthy GPU-backed server if a single immediate log read did not contain the exact strings `CUDA` and `offload`. This yielded the confusing "GPU layer offload was not confirmed" error reported on GTX 1060.
+- The new Rust GPU diagnostics parser checks explicit `offloaded N/M layers to GPU` evidence **and** an initialized CUDA device, independently of capitalization and unrelated log text. A healthy server is allowed a bounded grace period for log flushing. We never treat HTTP health, requested `--n-gpu-layers`, or model download as proof of GPU inference.
+- If GPU evidence remains missing, the UI reports a safe summary and the **real log filename** in app data, instead of blaming the NVIDIA driver without evidence. Explicit 0-layer CPU fallback still fails closed. Regression tests cover positive, partial, zero, malformed and missing logs.
+- This is versioned **v0.3.13** so installations of v0.3.12 can discover it via the built-in GitHub updater. No new model download is needed. A physical GTX 1060 run remains necessary to certify inference.
+ 
 ## v0.3.12: experimental Bonsai 27B NVIDIA GPU option (Windows)
 
 - Settings → Local inference offers **Bonsai 27B 1-bit (Prism ML, Apache 2.0)** in addition to the three CPU-only models. The default remains Qwen2.5-Coder 1.5B on the CPU. Existing chats and downloaded GGUF files are not modified.
