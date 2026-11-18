@@ -13,7 +13,7 @@ export type GenerationMetadata = {
 };
 export type GenerationResult = { text: string; meta: GenerationMetadata };
 export type ReviewOutcome =
-  | "accepted" | "rejected_output_limit" | "rejected_incomplete_stream"
+  | "accepted" | "rejected_output_limit" | "rejected_runtime_limit" | "rejected_incomplete_stream"
   | "rejected_unclosed_fence" | "rejected_no_implementation"
   | "rejected_static_checks" | "no_visible_text"
   | "staged" | "staging_failed" | "staging_not_possible";
@@ -34,6 +34,10 @@ export function reviewGeneration(
   if (!text.trim()) return { outcome: "no_visible_text", accepted: false, closedFences,
     warning: "The model produced no visible response. Copy the generation diagnostics in Settings." };
   if (meta.finishReason === "length") {
+    if (meta.outputLimit === -1) {
+      return { outcome:"rejected_runtime_limit", accepted:false, closedFences,
+        warning:"The model stopped due to a runtime or context-capacity limit, even though LocalForge imposes no output-token cap. The partial code was NOT staged. Copy diagnostics in Settings." };
+    }
     const measured = meta.completionTokens == null ? `up to ${meta.outputLimit}` : String(meta.completionTokens);
     return { outcome:"rejected_output_limit", accepted:false, closedFences,
       warning: `The model hit its response-token limit (${measured} generated tokens; configured limit ${meta.outputLimit}). The displayed code is incomplete and was NOT staged. Copy diagnostics in Settings.` };
