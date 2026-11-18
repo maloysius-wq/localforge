@@ -693,6 +693,12 @@ export default function App() {
           } catch (error) { setNotice("Project inspection was limited: "+String(error)); }
         }
         const { task, messages: codeMessages, projectContext } = prepareGeneration(content,history,snapshot,contextTokens);
+        // Stop may be clicked during project inspection, before a native
+        // generation exists. Never start a new inference after that cancellation.
+        if (canceledRef.current) {
+          setNotice("Generation stopped before inference started. No project files were changed.");
+          return;
+        }
         // Exactly one model inference per user prompt: no code-format retry or repair prompt.
         const result = await generate(requestId, codeMessages, projectContext, !!task);
         const reply = result.text;
@@ -758,8 +764,9 @@ export default function App() {
           setNotice("The model returned no visible text. Copy generation diagnostics from Settings to see why.");
         }
       } catch (error) {
-        const preserved = saveInterruptedReply(threadId, liveTextRef.current, startedAt, "failed");
-        setNotice("Generation failed: " + String(error)
+        const stopped = canceledRef.current;
+        const preserved = saveInterruptedReply(threadId, liveTextRef.current, startedAt, stopped ? "stopped" : "failed");
+        setNotice((stopped ? "Generation stopped." : "Generation failed: " + String(error))
           + (preserved ? " Partial text was saved in the conversation; no project files were changed." : ""));
       } finally {
         pendingRef.current = null;
@@ -832,7 +839,7 @@ export default function App() {
             <div className="message-content"><div className="message-header"><strong>{message.role === "user" ? "You" : "LocalForge"}</strong><time>{timeLabel(message.createdAt)}</time>
               {message.incomplete && <span className="generation-timer" title="This is an unfinished, unverified response">Incomplete · not applied</span>}
               {message.role === "assistant" && typeof message.durationMs === "number" && Number.isFinite(message.durationMs) &&
-                <span className="generation-timer" title="Total time from sending the prompt until the response completed">Generated in {formatGenerationDuration(message.durationMs)}</span>}
+                <span className="generation-timer" title="Elapsed time from the prompt until generation ended">{message.incomplete ? "Ran for " : "Generated in "}{formatGenerationDuration(message.durationMs)}</span>}
             </div><MessageBody content={message.content} isAssistant={message.role === "assistant"}
               onPropose={message.role === "assistant" && !message.incomplete ? proposeCode : undefined} /></div>
           </article>)}
