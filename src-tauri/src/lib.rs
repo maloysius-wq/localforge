@@ -68,11 +68,35 @@ fn context_budget(tokens: u32) -> usize {
 }
 const MAX_GENERATION_TOKENS: u32 = 1536;
 const MAX_CODE_GENERATION_TOKENS: u32 = 3072;
-fn generation_limit(backend: Option<&str>, code: bool, context: u32) -> u32 {
-    if backend == Some("cuda") {
-        if code && context >= 8192 { 4096 } else { 2048.min(context / 2) }
-    } else if code { MAX_CODE_GENERATION_TOKENS }
-    else { MAX_GENERATION_TOKENS }
+// This is a per-request output budget, not a model context setting.
+// At 32K Bonsai may spend 4K, 8K or 12K tokens completing code. Protect
+// smaller contexts and the existing CPU models from oversized allocations.
+fn generation_limit(backend: Option<&str>, code: bool, context: u32, requested: Option<u32>) -> Result<u32, String> {
+    if backend == Some("cuda") && code {
+        if context < 8192 { return Ok(2048); }
+        if context < 16384 { return Ok(4096); }
+        let maximum = if context >= 32768 { 12288 } else { 8192 };
+        let configured = requested.unwrap_or(8192);
+        if !matches!(configured, 4096 | 8192 | 12288) || configured > maximum {
+            return Err(format!(
+                "Invalid Bonsai code output limit for this context. Choose 4K, 8K{} tokens.",
+                if maximum >= 12288 { " or 12K" } else { "" }
+            ));
+        }
+        return Ok(configured);
+    }
+    if requested.is_some() && backend != Some("cuda") {
+        return Err("Custom code output limits are only available for Bonsai CUDA.".into());
+    }
+    Ok(if backend == Some("cuda") { 2048.min(context / 2) }
+       else if code { MAX_CODE_GENERATION_TOKENS }
+       else { MAX_GENERATION_TOKENS })
+}
+fn generation_timeout(backend: Option<&str>) -> Duration {
+    // 4096 generated tokens took 627s on field-tested GTX 1060. A 12K
+    // completion can take >30 min. Preserve 15 min for the existing CPU path.
+    if backend == Some("cuda") { Duration::from_secs(3600) }
+    else { Duration::from_secs(900) }
 }
 
 
@@ -543,7 +567,7 @@ impl CompletionEvidence {
     }
 }
 #[tauri::command]
-async fn generate(app: AppHandle, engine: State<'_, Engine>, request_id: String, messages: Vec<ChatMessage>, project_context: Option<String>, code_only: bool) -> Result<generation_log::GenerationResult, String> {
+async fn generate(app: AppHandle, engine: State<'_, Engine>, request_id: String, messages: Vec<ChatMessage>, project_context: Option<String>, code_only: bool, code_output_tokens: Option<u32>) -> Result<generation_log::GenerationResult, String> {
     if messages.is_empty() || messages.len() > 40 { return Err("Invalid conversation length".into()); }
     let (port, key, cancel, context_tokens, backend) = {
         let mut inner = engine.inner.lock().unwrap_or_else(|p| p.into_inner());
@@ -560,7 +584,7 @@ async fn generate(app: AppHandle, engine: State<'_, Engine>, request_id: String,
     if code_only {
         conversation[0]["content"] = serde_json::json!(CODE_FIRST_SYSTEM_PROMPT);
     }
-    let output_limit = generation_limit(backend.as_deref(), code_only, context_tokens);
+    let output_limit = generation_limit(backend.as_deref(), code_only, context_tokens, code_output_tokens)?;
     let mut trace = generation_log::GenerationTrace::new(&app, &request_id, backend.as_deref(), code_only, context_tokens, output_limit);
     trace.phase = "tokenizing";
     let client = reqwest::Client::builder().timeout(Duration::from_secs(900)).build().map_err(|e| e.to_string())?;
@@ -610,6 +634,7 @@ async fn generate(app: AppHandle, engine: State<'_, Engine>, request_id: String,
     };
     trace.phase = "request";
     let response = match client.post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+        .timeout(generation_timeout(backend.as_deref()))
         .bearer_auth(&key).json(&payload).send().await {
         Ok(response) => response,
         Err(e) => {
@@ -848,10 +873,19 @@ mod prompt_tests {
     }
     #[test]
     fn bonsai_response_limit_preserves_space_for_final_code() {
-        assert_eq!(generation_limit(Some("cuda"), true, 32768), 4096);
-        assert_eq!(generation_limit(Some("cuda"), false, 32768), 2048);
-        assert_eq!(generation_limit(Some("cuda"), true, 4096), 2048);
-        assert_eq!(generation_limit(Some("cpu"), true, 32768), MAX_CODE_GENERATION_TOKENS);
+        assert_eq!(generation_limit(Some("cuda"), true, 32768, None).unwrap(), 8192);
+        assert_eq!(generation_limit(Some("cuda"), true, 32768, Some(12288)).unwrap(), 12288);
+        assert_eq!(generation_limit(Some("cuda"), true, 32768, Some(4096)).unwrap(), 4096);
+        assert!(generation_limit(Some("cuda"), true, 32768, Some(16384)).is_err());
+        assert_eq!(generation_limit(Some("cuda"), true, 16384, None).unwrap(), 8192);
+        assert!(generation_limit(Some("cuda"), true, 16384, Some(12288)).is_err());
+        assert_eq!(generation_limit(Some("cuda"), true, 8192, None).unwrap(), 4096);
+        assert_eq!(generation_limit(Some("cuda"), true, 4096, None).unwrap(), 2048);
+        assert_eq!(generation_limit(Some("cuda"), false, 32768, None).unwrap(), 2048);
+        assert_eq!(generation_limit(Some("cpu"), true, 32768, None).unwrap(), MAX_CODE_GENERATION_TOKENS);
+        assert!(generation_limit(Some("cpu"), true, 32768, Some(8192)).is_err());
+        assert_eq!(generation_timeout(Some("cuda")), Duration::from_secs(3600));
+        assert_eq!(generation_timeout(Some("cpu")), Duration::from_secs(900));
     }
     #[test]
     fn reasoning_only_sse_is_not_silent_success_or_leaked_trace() {
