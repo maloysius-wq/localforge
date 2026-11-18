@@ -727,7 +727,8 @@ export default function App() {
             : reply;
           const completedAt = Date.now();
           const answer: ChatMessage = { id: newId(), role: "assistant", content: finalText,
-            createdAt: completedAt, durationMs: Math.max(0, completedAt - startedAt) };
+            createdAt: completedAt, durationMs: Math.max(0, completedAt - startedAt),
+            incomplete: decision.outcome === "rejected_repetition" };
           setWorkspace(state => record({ ...state, threads: state.threads.map(t => t.id === threadId
             ? { ...t, messages: [...t.messages, answer], updatedAt: Date.now() } : t) },
             validated ? "Local model response received" : "Local model returned no complete implementation"));
