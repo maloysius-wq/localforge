@@ -22,7 +22,7 @@ pub(crate) struct GenerationMeta {
     pub(crate) finish_reason: Option<String>,
     pub(crate) prompt_tokens: Option<u32>,
     pub(crate) completion_tokens: Option<u64>,
-    pub(crate) output_limit: u32,
+    pub(crate) output_limit: i32,
     pub(crate) visible_chars: u64,
     pub(crate) reasoning_chunks: u32,
     pub(crate) sse_events: u32,
@@ -94,7 +94,7 @@ pub(crate) struct GenerationTrace {
     pub(crate) meta: GenerationMeta,
 }
 impl GenerationTrace {
-    pub(crate) fn new(app: &AppHandle, request_id: &str, backend: Option<&str>, code_only: bool, context: u32, limit: u32) -> Self {
+    pub(crate) fn new(app: &AppHandle, request_id: &str, backend: Option<&str>, code_only: bool, context: u32, limit: i32) -> Self {
         Self {
             path: log_path(app).ok(),
             request_id: if valid_request_id(request_id) { request_id.to_string() } else { "invalid-id".into() },
@@ -143,7 +143,10 @@ impl GenerationTrace {
     pub(crate) fn completed(&mut self, canceled: bool) -> GenerationMeta {
         self.phase = "complete";
         self.outcome = if canceled { "cancelled" }
-            else if self.meta.finish_reason.as_deref() == Some("length") { "output_limit" }
+            else if self.meta.finish_reason.as_deref() == Some("length") {
+                if self.meta.output_limit == -1 { "model_context_exhausted" }
+                else { "output_limit" }
+            }
             else if self.meta.done_marker { "completed" }
             else { "stream_ended_without_done" };
         self.meta.duration_ms = self.started.elapsed().as_millis() as u64;
@@ -238,7 +241,7 @@ mod tests {
             phase:"complete", outcome:"output_limit", stream_bytes:2024,
             meta: &GenerationMeta {
                 finish_reason: Some("length".into()), prompt_tokens:Some(1024),
-                completion_tokens:Some(4096),output_limit:4096,visible_chars:8000,
+                completion_tokens:Some(4096),output_limit:-1,visible_chars:8000,
                 reasoning_chunks:3,sse_events:120,malformed_sse:0,done_marker:true,
                 duration_ms:12345,first_visible_ms:Some(2000),
             },
