@@ -4,6 +4,12 @@
 
 LocalForge is an open-source project toward a compact, shared coding model with Python, web, desktop, mobile, and eventually pixel-art specialties. The interface resembles a desktop coding agent, but the initial releases deliberately add capabilities one by one with clear status reporting and local privacy safeguards.
 
+## v0.3.19: preserve interrupted long generations
+- Pressing **Stop** now saves any visible partial response in the current chat, clearly marked **Incomplete · not applied**. A mid-stream transport error also preserves already received visible code instead of discarding hours of work.
+- Interrupted replies are never automatically staged as project edits and cannot be proposed directly from their incomplete code blocks. The source remains available for copying or a follow-up prompt, and existing project approval, SHA checks and undo remain unchanged.
+- The token stream redraws at most about eight times per second rather than on every token. Stop during project inspection no longer inadvertently starts inference after cancellation. CPU/GPU UI indicators reflect the selected backend.
+- No artificial Bonsai generation-time or output-token cap has been reintroduced. Physical Windows CUDA and multi-hour resilience still require field validation.
+
 ## v0.3.18: remove arbitrary Bonsai generation and time limits
 
 - A real GTX 1060 field log from v0.3.17 showed exactly `4096/4096` generated tokens, `finishReason=length`, `doneMarker=true`, a 32,768-token context with only 1,187 input tokens, 11,846 visible code characters and a 627-second request. This **proves LocalForge's configured response-token ceiling**, not a GPU crash, context exhaustion or malformed SSE.
