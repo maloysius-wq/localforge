@@ -31,6 +31,21 @@ describe("workspace persistence", () => {
     expect(messages[0].durationMs).toBeUndefined();
     expect(messages[1].durationMs).toBe(25_700);
   });
+  it("persists incomplete long-generation replies and keeps older conversations compatible", () => {
+    const state = blankState();
+    state.threads.push({ id: "long", title: "Long task", projectId: null, createdAt: 1, updatedAt: 10,
+      messages: [
+        { id: "older", role: "assistant", content: "Earlier full answer", createdAt: 2 },
+        { id: "partial", role: "assistant", content: "⚠ Partial\\n\\n<code>", createdAt: 10,
+          durationMs: 3_600_000, incomplete: true },
+      ] });
+    let stored = "";
+    expect(saveWorkspace(state, { setItem: (_key, json) => { stored = json; } })).toBe(true);
+    const restored = loadWorkspace({ getItem: () => stored }).threads[0].messages;
+    expect(restored[0].incomplete).toBeUndefined();
+    expect(restored[1]).toMatchObject({ incomplete: true, durationMs: 3_600_000 });
+    expect(restored[1].content).toContain("<code>");
+  });
   it("rejects invalid documents", () => expect(loadWorkspace({ getItem: () => "{not-json" })).toEqual(blankState()));
   it("handles absent storage without throwing", () => expect(saveWorkspace(blankState(), { setItem: () => { throw Error("quota"); } })).toBe(false));
   it("ignores repeated paths across separator and case differences", () => {
