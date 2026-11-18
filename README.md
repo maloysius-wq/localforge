@@ -4,6 +4,14 @@
 
 LocalForge is an open-source project toward a compact, shared coding model with Python, web, desktop, mobile, and eventually pixel-art specialties. The interface resembles a desktop coding agent, but the initial releases deliberately add capabilities one by one with clear status reporting and local privacy safeguards.
 
+## v0.3.17: structured diagnostics for truncated generations
+
+- **Why:** Bonsai 27B on GTX 1060 wrote substantial code, then stopped partway through; the UI's generic "model did not produce usable code" could not distinguish token cap, unclosed code fence, truncated SSE stream, static source-check failures or a poor model response. No raw stream/log from this specific incident was available, so the exact cause is unconfirmed.
+- Native generation now writes a bounded, metadata-only `generation-diagnostics.jsonl` in the app's standard log directory. Per-request records include random request ID, backend, configured context/output limits, actual prompt and completion token counts when available, server `finish_reason`, end-of-SSE `[DONE]` receipt, event counts, malformed-frame counts, stream byte counts, visible-character counts, separate reasoning-chunk counts (never content), total duration, first visible token timing and safe outcome/stage. Failures in HTTP or SSE are separately categorized. The metadata log is rotated at 512 KiB and never stores prompts, code, raw tokens, reasoning, model paths, API keys or SSE bodies.
+- React now retains the structured generation result rather than discarding native finish metadata. It distinguishes `finish_reason=length` from a clean stop, missing completion marker and unclosed fenced source. Incomplete code stays visible with a targeted warning but cannot be automatically staged. Existing first-pass static HTML checks and source-change approval remain enforced.
+- The native IPC accepts only enum-like review outcomes and valid UUIDs when recording frontend validation/staging results. Settings now offers **Copy generation diagnostics**, copying recent bounded sanitized records for troubleshooting without requiring a user to find log files.
+- Frontend tests cover clean vs cut-off replies, missing stream-completion markers, unclosed fences and static-check failures; Rust tests cover metadata-only records. No prompt code is logged. The response length itself remains 4,096 tokens for Bonsai coding at 8K+ context. Diagnostics must be tested on the actual 6GB GTX 1060 before drawing conclusions about physical speed or memory usage.
+
 ## v0.3.16: prevent Bonsai thinking-only empty responses
 
 - After 32K-context testing, LocalForge could return no text after a long generation. Exact runtime SSE payload was not provided, so the incident's cause is not proven. The native backend had a real failure mode: it read only visible `delta.content`, ignoring separate `reasoning_content` and `finish_reason`, while still imposing the same small output-token caps as CPU models.
