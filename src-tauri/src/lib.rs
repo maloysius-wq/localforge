@@ -496,6 +496,12 @@ fn cancel_generation(engine: State<'_, Engine>) {
         flag.store(true, Ordering::Relaxed);
     }
 }
+// Poll only for explicit user cancellation, never for an elapsed-time cap.
+async fn wait_for_generation_cancel(cancel: &AtomicBool) {
+    while !cancel.load(Ordering::Relaxed) {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
 struct GenerationGuard<'a>(&'a Engine);
 impl Drop for GenerationGuard<'_> {
     fn drop(&mut self) {
@@ -631,7 +637,15 @@ async fn generate(app: AppHandle, engine: State<'_, Engine>, request_id: String,
     if let Some(timeout) = generation_timeout(backend.as_deref()) {
         request = request.timeout(timeout);
     }
-    let response = match request.send().await {
+    let sent = tokio::select! {
+        response = request.send() => response,
+        _ = wait_for_generation_cancel(cancel.as_ref()) => {
+            trace.outcome = "cancelled_before_headers";
+            let meta = trace.completed(true);
+            return Ok(generation_log::GenerationResult { text: String::new(), meta });
+        }
+    };
+    let response = match sent {
         Ok(response) => response,
         Err(e) => {
             trace.outcome = "request_error";
@@ -647,8 +661,13 @@ async fn generate(app: AppHandle, engine: State<'_, Engine>, request_id: String,
     let mut buffer = Vec::<u8>::new();
     let mut output = String::new();
     let mut evidence = CompletionEvidence::default();
-    while let Some(chunk) = stream.next().await {
+    loop {
         if cancel.load(Ordering::Relaxed) { break; }
+        let next_chunk = tokio::select! {
+            incoming = stream.next() => incoming,
+            _ = wait_for_generation_cancel(cancel.as_ref()) => break,
+        };
+        let Some(chunk) = next_chunk else { break; };
         let bytes = match chunk {
             Ok(bytes) => bytes,
             Err(e) => {
