@@ -4,6 +4,13 @@
 
 LocalForge is an open-source project toward a compact, shared coding model with Python, web, desktop, mobile, and eventually pixel-art specialties. The interface resembles a desktop coding agent, but the initial releases deliberately add capabilities one by one with clear status reporting and local privacy safeguards.
 
+## v0.3.16: prevent Bonsai thinking-only empty responses
+
+- After 32K-context testing, LocalForge could return no text after a long generation. Exact runtime SSE payload was not provided, so the incident's cause is not proven. The native backend had a real failure mode: it read only visible `delta.content`, ignoring separate `reasoning_content` and `finish_reason`, while still imposing the same small output-token caps as CPU models.
+- **Experimental Bonsai CUDA only:** request the pinned PrismML server's `--reasoning-budget 384` and `--reasoning-format deepseek`, reserving tokens for the final response. Non-code responses allow 2,048 output tokens; code requests allow 4,096 at 8K+ contexts and 2,048 at 4K. The model's 32K context is unchanged. Sampling follows Prism ML's published 0.7 temperature, 0.95 top-p and 20 top-k recommendations.
+- Native SSE handling tracks only whether separate reasoning chunks appeared, final stop reason, and token counts. No raw thinking trace is exposed or saved. If a model responds without final visible text, the app now gives a targeted error instead of suggesting an unrelated unload/reload. Regression tests cover reasoning-only outputs and a visible final answer.
+- Original CPU inference configuration, downloads, CUDA offload verification, project-file approval, undo and cancellation remain unchanged. Test on GTX 1060 hardware before claiming actual coding-quality improvements.
+
 ## v0.3.15: Bonsai 32K context on 6GB GPUs
 
 - Bonsai's model architecture supports far more than 4,096 tokens; the previous limit was a conservative hardware-validation setting, not a model limitation. The user successfully loaded and generated with Bonsai but quickly exhausted the 4K coding window.
