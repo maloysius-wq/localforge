@@ -17,6 +17,15 @@ describe("generation diagnostics classification", () => {
     expect(result.accepted).toBe(false);
     expect(result.warning).toContain("no output-token cap");
   });
+  it("detects repeated-output stops as incomplete rather than an output cap", () => {
+    const review=reviewGeneration("dummy repeated CSS",
+      {...meta, finishReason:"repetition", doneMarker:false, outputLimit:-1},true,false,false);
+    expect(review.outcome).toBe("rejected_repetition");
+    expect(review.accepted).toBe(false);
+    expect(review.warning).toContain("repeating");
+    expect(review.warning).toContain("NOT staged");
+    expect(review.warning).not.toContain("reached its response-token limit");
+  });
   it("accepts a normally completed unlimited stream", () => {
     const m = {...meta, outputLimit:-1};
     expect(reviewGeneration("```python\nprint(1)\n```",m,true,true,false).accepted).toBe(true);
