@@ -4,6 +4,13 @@
 
 LocalForge is an open-source project toward a compact, shared coding model with Python, web, desktop, mobile, and eventually pixel-art specialties. The interface resembles a desktop coding agent, but the initial releases deliberately add capabilities one by one with clear status reporting and local privacy safeguards.
 
+## v0.3.20: halt runaway CSS/code repetition without a generation cap
+- Bonsai's CUDA path now uses a mild `repeat_penalty=1.05` over the most recent 256 tokens, leaving CPU models unchanged. Repeated CSS/color declarations remain possible, but are discouraged by the source-first coding prompt.
+- A bounded in-memory detector checks for substantial, **exact** repetitive output cycles (at least 768 bytes, with a minimum of four consecutive copies of a substantial block). This only interrupts clearly repetitive output; there is no token, time, or normal-response length cap for Bonsai.
+- On detection, streaming ends with an explicit `repetition` finish reason in metadata, preserves partial output in the conversation with an incomplete label, and **never** auto-stages or writes that code. A privacy-safe diagnostic outcome `repetition_detected` is logged without the model output, prompts, or source.
+- Rust regression tests cover CSS loops across streaming chunks, benign CSS reuse, distinct rules and bounded memory. TypeScript tests verify the repetition stop is not confused with a configured output limit.
+- Real multi-hour GTX 1060 validation is still needed. The exact-cycles detector does not prove the model will always avoid semantic repetition, and low-bit quantization/runtime defects may still affect coding quality.
+
 ## v0.3.19: preserve interrupted long generations
 - Pressing **Stop** now saves any visible partial response in the current chat, clearly marked **Incomplete · not applied**. A mid-stream transport error also preserves already received visible code instead of discarding hours of work.
 - Interrupted replies are never automatically staged as project edits and cannot be proposed directly from their incomplete code blocks. The source remains available for copying or a follow-up prompt, and existing project approval, SHA checks and undo remain unchanged.
