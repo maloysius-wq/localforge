@@ -3,6 +3,7 @@ mod model_catalog;
 mod workspace_db;
 mod updates;
 mod gpu_diagnostics;
+mod generation_log;
 use futures_util::StreamExt;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -542,7 +543,7 @@ impl CompletionEvidence {
     }
 }
 #[tauri::command]
-async fn generate(app: AppHandle, engine: State<'_, Engine>, request_id: String, messages: Vec<ChatMessage>, project_context: Option<String>, code_only: bool) -> Result<String, String> {
+async fn generate(app: AppHandle, engine: State<'_, Engine>, request_id: String, messages: Vec<ChatMessage>, project_context: Option<String>, code_only: bool) -> Result<generation_log::GenerationResult, String> {
     if messages.is_empty() || messages.len() > 40 { return Err("Invalid conversation length".into()); }
     let (port, key, cancel, context_tokens, backend) = {
         let mut inner = engine.inner.lock().unwrap_or_else(|p| p.into_inner());
@@ -560,6 +561,8 @@ async fn generate(app: AppHandle, engine: State<'_, Engine>, request_id: String,
         conversation[0]["content"] = serde_json::json!(CODE_FIRST_SYSTEM_PROMPT);
     }
     let output_limit = generation_limit(backend.as_deref(), code_only, context_tokens);
+    let mut trace = generation_log::GenerationTrace::new(&app, &request_id, backend.as_deref(), code_only, context_tokens, output_limit);
+    trace.phase = "tokenizing";
     let client = reqwest::Client::builder().timeout(Duration::from_secs(900)).build().map_err(|e| e.to_string())?;
     // Count the actual model-chat template with the local GGUF tokenizer,
     // not a guessed characters-per-token conversion. These calls never leave
@@ -577,6 +580,7 @@ async fn generate(app: AppHandle, engine: State<'_, Engine>, request_id: String,
                     if let Ok(data) = tokenized.json::<serde_json::Value>().await {
                         if let Some(count) = data.get("tokens").and_then(|v|v.as_array()).map(|a|a.len() as u32) {
                             prompt_tokens = Some(count);
+                            trace.meta.prompt_tokens = Some(count);
                             let _ = app.emit("model-context", ContextEvent {
                                 request_id: request_id.clone(), used_tokens: count,
                                 max_tokens: context_tokens, kind:"prompt",
@@ -589,6 +593,7 @@ async fn generate(app: AppHandle, engine: State<'_, Engine>, request_id: String,
     }
     if let Some(count) = prompt_tokens {
         if count >= context_tokens.saturating_sub(output_limit.min(context_tokens / 2)) {
+            trace.outcome = "prompt_over_budget";
             return Err(format!("The current prompt uses {count} of {context_tokens} context tokens, leaving insufficient space for code generation. Reduce the project source or use a larger context window"));
         }
     }
@@ -603,24 +608,44 @@ async fn generate(app: AppHandle, engine: State<'_, Engine>, request_id: String,
             "stream_options":{"include_usage":true},"max_tokens":output_limit,
             "temperature":0.1})
     };
-    let response = client.post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
-        .bearer_auth(&key).json(&payload)
-        .send().await.map_err(|e| format!("Model communication failed: {e}"))?;
-    if !response.status().is_success() { return Err(format!("Model returned HTTP {}", response.status())); }
+    trace.phase = "request";
+    let response = match client.post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+        .bearer_auth(&key).json(&payload).send().await {
+        Ok(response) => response,
+        Err(e) => {
+            trace.outcome = "request_error";
+            return Err(format!("Model communication failed: {e}"));
+        }
+    };
+    if !response.status().is_success() {
+        trace.outcome = "http_error";
+        return Err(format!("Model returned HTTP {}", response.status()));
+    }
+    trace.phase = "streaming";
     let mut stream = response.bytes_stream();
     let mut buffer = Vec::<u8>::new();
     let mut output = String::new();
     let mut evidence = CompletionEvidence::default();
     while let Some(chunk) = stream.next().await {
         if cancel.load(Ordering::Relaxed) { break; }
-        let bytes = chunk.map_err(|e| format!("Response interrupted: {e}"))?;
+        let bytes = match chunk {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                trace.outcome = "stream_error";
+                return Err(format!("Response interrupted: {e}"));
+            }
+        };
+        trace.stream_bytes = trace.stream_bytes.saturating_add(bytes.len() as u64);
         buffer.extend_from_slice(&bytes);
-        if buffer.len() > 1_000_000 { return Err("Oversized streaming response frame".into()); }
+        if buffer.len() > 1_000_000 {
+            trace.outcome = "oversized_sse_frame";
+            return Err("Oversized streaming response frame".into());
+        }
         while let Some(pos) = buffer.iter().position(|b| *b == b'\n') {
             let line: Vec<_> = buffer.drain(..=pos).collect();
             let line = std::str::from_utf8(&line).map_err(|e| e.to_string())?.trim();
             if let Some(data) = line.strip_prefix("data: ") {
-                if data == "[DONE]" { break; }
+                if data == "[DONE]" { trace.meta.done_marker = true; break; }
                 if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
                     if let Some(usage) = event.get("usage") {
                         if let Some(prompt) = usage.get("prompt_tokens").and_then(|v|v.as_u64()) {
@@ -633,20 +658,29 @@ async fn generate(app: AppHandle, engine: State<'_, Engine>, request_id: String,
                             });
                         }
                     }
-                    if let Some(text) = evidence.observe(&event) {
+                    let is_reasoning = event.pointer("/choices/0/delta/reasoning_content")
+                        .and_then(|v|v.as_str()).is_some_and(|v| !v.is_empty());
+                    let visible = evidence.observe(&event);
+                    trace.observe(&event, visible, is_reasoning);
+                    if let Some(text) = visible {
                         if !text.is_empty() {
                             output.push_str(text);
                             let _ = app.emit("model-token", TokenEvent { request_id: request_id.clone(), delta: text.to_owned() });
                         }
                     }
+                } else {
+                    trace.meta.malformed_sse = trace.meta.malformed_sse.saturating_add(1);
                 }
             }
         }
     }
-    if !cancel.load(Ordering::Relaxed) && output.trim().is_empty() {
+    let canceled = cancel.load(Ordering::Relaxed);
+    let meta = trace.completed(canceled);
+    if !canceled && output.trim().is_empty() {
+        trace.outcome = "no_visible_output";
         return Err(evidence.empty_reply_error(output_limit));
     }
-    Ok(output)
+    Ok(generation_log::GenerationResult { text: output, meta })
 }
 
 
@@ -841,12 +875,21 @@ mod prompt_tests {
     }
 }
 
+#[tauri::command]
+fn get_generation_diagnostics(app: AppHandle) -> Result<String, String> {
+    generation_log::read_diagnostics(&app)
+}
+#[tauri::command]
+fn record_generation_review(app: AppHandle, review: generation_log::Review) -> Result<(), String> {
+    generation_log::record_review(&app, review)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(Engine::default())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![model_info, engine_status, download_model, start_model, stop_model, cancel_generation, generate, workspace::inspect_project, workspace::read_project_file, workspace::apply_project_change, workspace::undo_project_change, workspace::apply_project_changes, workspace::undo_project_changes, workspace_db::initialize_native_workspace, workspace_db::save_native_workspace, updates::check_for_updates, updates::install_verified_update])
+        .invoke_handler(tauri::generate_handler![model_info, engine_status, download_model, start_model, stop_model, cancel_generation, generate, workspace::inspect_project, workspace::read_project_file, workspace::apply_project_change, workspace::undo_project_change, workspace::apply_project_changes, workspace::undo_project_changes, workspace_db::initialize_native_workspace, workspace_db::save_native_workspace, updates::check_for_updates, updates::install_verified_update, get_generation_diagnostics, record_generation_review])
         .on_window_event(|window, event| {
             if matches!(event, WindowEvent::Destroyed) { let _ = window.state::<Engine>().stop(); }
         })
