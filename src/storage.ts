@@ -1,6 +1,6 @@
 export type Theme = "dark" | "light";
 export interface Project { id: string; name: string; path: string; addedAt: number }
-export interface ChatMessage { id: string; role: "user" | "assistant" | "system"; content: string; createdAt: number; durationMs?: number }
+export interface ChatMessage { id: string; role: "user" | "assistant" | "system"; content: string; createdAt: number; durationMs?: number; incomplete?: boolean }
 export interface Thread { id: string; projectId: string | null; title: string; createdAt: number; updatedAt: number; messages: ChatMessage[] }
 export interface EventLog { id: string; message: string; at: number }
 export interface WorkspaceState {
