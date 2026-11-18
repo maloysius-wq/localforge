@@ -217,7 +217,7 @@ function SettingsModal({ theme, setTheme, onClose, engine, model, progress, down
       <div className="settings-section"><h3>Privacy and safety</h3>
         <div className="setting-summary"><ShieldCheck size={18}/><div><strong>Your data stays on this computer</strong><span>Chats stay local. Your selected project can be inspected on request and edited only after approving each proposed file change. No shell execution. Update checks reach the official GitHub API on request.</span></div></div>
       </div>
-      <div className="settings-footer">LocalForge 0.3.19 · offline coding workspace</div>
+      <div className="settings-footer">LocalForge 0.3.20 · offline coding workspace</div>
     </section>
   </div>;
 }
@@ -813,7 +813,7 @@ export default function App() {
         </div>)}
       </div>
       <div className="sidebar-footer">
-        <div className="sidebar-status"><span className="status-indicator"/><div><strong>{engine.running ? (engine.backend === "cuda" ? "GPU model ready" : "CPU model ready") : "Model not loaded"}</strong><span>Offline coding · v0.3.19</span></div></div>
+        <div className="sidebar-status"><span className="status-indicator"/><div><strong>{engine.running ? (engine.backend === "cuda" ? "GPU model ready" : "CPU model ready") : "Model not loaded"}</strong><span>Offline coding · v0.3.20</span></div></div>
         <button className="sidebar-settings" onClick={() => setSettingsOpen(true)}><Settings2 size={18}/> Settings <span>⌘,</span></button>
       </div>
     </aside>
@@ -889,7 +889,7 @@ export default function App() {
             </> : <div className="detail-empty"><Folder size={24}/><p>No project selected</p><span>Add a project folder to associate conversations with real work.</span><button onClick={addProject}>Choose folder <ArrowRight size={14}/></button></div>}</div>
         </>}
       </div>
-      <div className="detail-footer"><div><span className="footer-small-dot"/> Local-first workspace</div><span>0.3.19</span></div>
+      <div className="detail-footer"><div><span className="footer-small-dot"/> Local-first workspace</div><span>0.3.20</span></div>
     </aside>}
     {(notice || storageWarning || preferencesWarning) && <div className="toast" role="alert"><Info size={17}/><span>{storageWarning ? (isTauri() ? "Unable to save the native workspace database. New changes may not survive restarting the app." : "Local storage is unavailable or full. Changes may not survive restarting the app.") : preferencesWarning ? "Some model preferences could not be saved in WebView storage. Your conversations use the separate native database." : notice}</span><button aria-label="Dismiss notification" onClick={() => { setNotice(""); setStorageWarning(false); setPreferencesWarning(false); }}><X size={16}/></button></div>}
     {batchProposal && <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget && !batchBusy)setBatchProposal(null);}}>
