@@ -217,7 +217,7 @@ function SettingsModal({ theme, setTheme, onClose, engine, model, progress, down
       <div className="settings-section"><h3>Privacy and safety</h3>
         <div className="setting-summary"><ShieldCheck size={18}/><div><strong>Your data stays on this computer</strong><span>Chats stay local. Your selected project can be inspected on request and edited only after approving each proposed file change. No shell execution. Update checks reach the official GitHub API on request.</span></div></div>
       </div>
-      <div className="settings-footer">LocalForge 0.3.18 · offline coding workspace</div>
+      <div className="settings-footer">LocalForge 0.3.19 · offline coding workspace</div>
     </section>
   </div>;
 }
@@ -268,6 +268,10 @@ export default function App() {
   const startupRef = useRef<Promise<[EngineStatus, ModelInfo]> | null>(null);
   const [generating, setGenerating] = useState(false);
   const [liveText, setLiveText] = useState("");
+  // Accumulate the complete stream without re-rendering React for every token.
+  // Multi-hour generations can produce hundreds of thousands of token events.
+  const liveTextRef = useRef("");
+  const liveFlushTimerRef = useRef<number | null>(null);
   const [inspected, setInspected] = useState<{ projectId: string; data: ProjectSnapshot } | null>(null);
   const [inspectBusy, setInspectBusy] = useState(false);
   const [viewedFile, setViewedFile] = useState<ProjectFile | null>(null);
@@ -384,14 +388,26 @@ export default function App() {
       })();
     }
     void onToken(token => {
-      if (pendingRef.current?.requestId === token.requestId) setLiveText(text => text + token.delta);
+      if (pendingRef.current?.requestId !== token.requestId) return;
+      liveTextRef.current += token.delta;
+      if (liveFlushTimerRef.current === null) {
+        liveFlushTimerRef.current = window.setTimeout(() => {
+          liveFlushTimerRef.current = null;
+          if (!disposed) setLiveText(liveTextRef.current);
+        }, 120);
+      }
     }).then(off => { if (disposed) off(); else unsubscribe.push(off); });
     void onDownload(value => { if (!disposed) setProgress(value); }).then(off => { if (disposed) off(); else unsubscribe.push(off); });
     void onContextUsage(value => {
       const threadId = pendingRef.current?.requestId === value.requestId ? pendingRef.current.threadId : null;
       if (!disposed && threadId) setContextMeters(old => ({...old,[threadId]:{used:value.usedTokens,max:value.maxTokens,kind:value.kind}}));
     }).then(off => { if (disposed) off(); else unsubscribe.push(off); });
-    return () => { disposed = true; unsubscribe.forEach(off => off()); };
+    return () => {
+      disposed = true;
+      if (liveFlushTimerRef.current !== null) window.clearTimeout(liveFlushTimerRef.current);
+      liveFlushTimerRef.current = null;
+      unsubscribe.forEach(off => off());
+    };
   }, []);
 
   useEffect(() => {
@@ -612,6 +628,21 @@ export default function App() {
     }catch(e){setNotice(`Undo refused: ${String(e)}`);}
   }
 
+  function saveInterruptedReply(threadId: string, partial: string, startedAt: number, reason: "stopped" | "failed"): boolean {
+    if (!partial.trim()) return false;
+    const now = Date.now();
+    const content = reason === "stopped"
+      ? "⚠ Generation stopped by you. This response is incomplete and was not applied to project files.\n\n" + partial
+      : "⚠ Generation was interrupted by an error. This partial response is incomplete and was not applied to project files.\n\n" + partial;
+    const answer: ChatMessage = { id: newId(), role: "assistant", content, createdAt: now,
+      durationMs: Math.max(0, now - startedAt), incomplete: true };
+    setWorkspace(state => record({ ...state, threads: state.threads.map(thread => thread.id === threadId
+      ? { ...thread, messages: [...thread.messages, answer], updatedAt: now } : thread) },
+      reason === "stopped" ? "Preserved stopped generation as an incomplete chat reply"
+        : "Preserved interrupted generation as an incomplete chat reply"));
+    return true;
+  }
+
   function submitPrompt(text: string) {
     const content = text.trim();
     if (!content || generating) return;
@@ -635,6 +666,9 @@ export default function App() {
     const startedAt = Date.now();
     canceledRef.current = false;
     pendingRef.current = { requestId, threadId, startedAt };
+    liveTextRef.current = "";
+    if (liveFlushTimerRef.current !== null) window.clearTimeout(liveFlushTimerRef.current);
+    liveFlushTimerRef.current = null;
     setLiveText("");
     setGenerating(true);
     void (async () => {
@@ -666,7 +700,10 @@ export default function App() {
           && result.meta.finishReason !== "length" && result.meta.doneMarker
           ? verifyFirstPassWeb(reply, task.originalRequest + "\n" + content) : null;
         if (canceledRef.current) {
-          setNotice("Generation stopped. No partial file was saved.");
+          const preserved = saveInterruptedReply(threadId, reply || liveTextRef.current, startedAt, "stopped");
+          setNotice(preserved
+            ? "Generation stopped. Partial text was saved in this conversation, but no project files were changed."
+            : "Generation stopped before any visible text was produced. No project files were changed.");
           return;
         }
         if (reply.trim()) {
@@ -720,8 +757,18 @@ export default function App() {
           void recordGenerationReview(requestId,"no_visible_text",true,0).catch(() => {});
           setNotice("The model returned no visible text. Copy generation diagnostics from Settings to see why.");
         }
-      } catch (error) { setNotice("Generation failed: " + String(error)); }
-      finally { pendingRef.current = null; setLiveText(""); setGenerating(false); }
+      } catch (error) {
+        const preserved = saveInterruptedReply(threadId, liveTextRef.current, startedAt, "failed");
+        setNotice("Generation failed: " + String(error)
+          + (preserved ? " Partial text was saved in the conversation; no project files were changed." : ""));
+      } finally {
+        pendingRef.current = null;
+        if (liveFlushTimerRef.current !== null) window.clearTimeout(liveFlushTimerRef.current);
+        liveFlushTimerRef.current = null;
+        liveTextRef.current = "";
+        setLiveText("");
+        setGenerating(false);
+      }
     })();
   }
   function onSubmit(e: FormEvent) { e.preventDefault(); submitPrompt(draft); }
@@ -758,7 +805,7 @@ export default function App() {
         </div>)}
       </div>
       <div className="sidebar-footer">
-        <div className="sidebar-status"><span className="status-indicator"/><div><strong>{engine.running ? "CPU model ready" : "Model not loaded"}</strong><span>Offline coding · v0.3.11</span></div></div>
+        <div className="sidebar-status"><span className="status-indicator"/><div><strong>{engine.running ? (engine.backend === "cuda" ? "GPU model ready" : "CPU model ready") : "Model not loaded"}</strong><span>Offline coding · v0.3.19</span></div></div>
         <button className="sidebar-settings" onClick={() => setSettingsOpen(true)}><Settings2 size={18}/> Settings <span>⌘,</span></button>
       </div>
     </aside>
@@ -771,24 +818,25 @@ export default function App() {
           <strong className="topbar-title">{activeProject?.name || "Scratchpad"}</strong>
           <ChevronDown size={15} className="muted-chevron"/>
         </div>
-        <div className="top-actions"><button className="icon-button" type="button" title={fullscreen ? "Exit fullscreen (F11)" : "Enter fullscreen (F11)"} aria-label={fullscreen ? "Exit fullscreen" : "Enter fullscreen"} onClick={() => void toggleFullscreen()}>{fullscreen ? <Minimize2 size={19}/> : <Maximize2 size={19}/>}</button><span className={`engine-pill ${engine.running ? "ready" : ""}`}><span/> {engine.running ? "CPU model ready" : "Engine offline"}</span>
+        <div className="top-actions"><button className="icon-button" type="button" title={fullscreen ? "Exit fullscreen (F11)" : "Enter fullscreen (F11)"} aria-label={fullscreen ? "Exit fullscreen" : "Enter fullscreen"} onClick={() => void toggleFullscreen()}>{fullscreen ? <Minimize2 size={19}/> : <Maximize2 size={19}/>}</button><span className={`engine-pill ${engine.running ? "ready" : ""}`}><span/> {engine.running ? (engine.backend === "cuda" ? "GPU model ready" : "CPU model ready") : "Engine offline"}</span>
           <button className={`icon-button ${detailsOpen ? "toggled" : ""}`} title={detailsOpen ? "Hide details" : "Show details"} aria-label={detailsOpen ? "Hide details" : "Show details"} onClick={() => setDetailsOpen(!detailsOpen)}><PanelRightClose size={19}/></button>
           <button className="icon-button" title="Settings" aria-label="Settings" onClick={() => setSettingsOpen(true)}><Settings2 size={19}/></button>
         </div>
       </header>
-      <div className="model-banner" role="status"><Info size={16}/><span><strong>{engine.running ? "Offline coding chat active:" : "Set up local coding:"}</strong> {engine.running ? "Responses run on your CPU. Choose Inspect project to supply source context; file changes require approval." : "Open Settings to download, select and load a small CPU-only coding model. Prompts are saved even while offline."}</span><button aria-label="Open model settings" onClick={() => setSettingsOpen(true)}>{engine.running ? "Model" : "Set up"} <ArrowRight size={14}/></button></div>
+      <div className="model-banner" role="status"><Info size={16}/><span><strong>{engine.running ? "Offline coding chat active:" : "Set up local coding:"}</strong> {engine.running ? (engine.backend === "cuda" ? "Bonsai responses run locally on the experimental NVIDIA backend. File changes require approval." : "Responses run on your CPU. File changes require approval.") : "Open Settings to download, select and load a local coding model. Prompts are saved even while offline."}</span><button aria-label="Open model settings" onClick={() => setSettingsOpen(true)}>{engine.running ? "Model" : "Set up"} <ArrowRight size={14}/></button></div>
       <div className="conversation-scroll" ref={scrollRef}>
         {activeThread && activeThread.messages.length > 0 ? <div className="conversation-body">
           <div className="conversation-intro"><div className="conversation-kicker"><MessageSquare size={15}/> CONVERSATION</div><h1>{activeThread.title}</h1><p>Started {dateLabel(activeThread.createdAt)} · Saved only on this device</p></div>
           {activeThread.messages.map(message => <article key={message.id} className={`chat-message ${message.role}`}>
             <div className="message-avatar">{message.role === "user" ? "Y" : <Code2 size={16}/>}</div>
             <div className="message-content"><div className="message-header"><strong>{message.role === "user" ? "You" : "LocalForge"}</strong><time>{timeLabel(message.createdAt)}</time>
+              {message.incomplete && <span className="generation-timer" title="This is an unfinished, unverified response">Incomplete · not applied</span>}
               {message.role === "assistant" && typeof message.durationMs === "number" && Number.isFinite(message.durationMs) &&
                 <span className="generation-timer" title="Total time from sending the prompt until the response completed">Generated in {formatGenerationDuration(message.durationMs)}</span>}
             </div><MessageBody content={message.content} isAssistant={message.role === "assistant"}
-              onPropose={message.role === "assistant" ? proposeCode : undefined} /></div>
+              onPropose={message.role === "assistant" && !message.incomplete ? proposeCode : undefined} /></div>
           </article>)}
-          {generating && pendingRef.current?.threadId === activeThread.id && <article className="chat-message assistant" aria-live="polite"><div className="message-avatar"><Code2 size={16}/></div><div className="message-content"><div className="message-header"><strong>LocalForge · generating</strong><WorkingTimer key={pendingRef.current.requestId} startedAt={pendingRef.current.startedAt}/></div><MessageBody content={liveText || "Thinking on your CPU…"} isAssistant /></div></article>}
+          {generating && pendingRef.current?.threadId === activeThread.id && <article className="chat-message assistant" aria-live="polite"><div className="message-avatar"><Code2 size={16}/></div><div className="message-content"><div className="message-header"><strong>LocalForge · generating</strong><WorkingTimer key={pendingRef.current.requestId} startedAt={pendingRef.current.startedAt}/></div><MessageBody content={liveText || "Generating locally…"} isAssistant /></div></article>}
           {!engine.running && activeThread.messages.at(-1)?.role === "user" && <div className="offline-response"><Info size={17}/><div><strong>Prompt saved. No response generated.</strong><p>Open Settings, download a GGUF model and load it to enable real offline chat.</p></div></div>}
         </div> : <EmptyChat project={activeProject} onPrompt={prompt => { setDraft(prompt); textareaRef.current?.focus(); }}/>}</div>
       <div className="composer-area">
@@ -805,7 +853,7 @@ export default function App() {
           </div>
           {generating ? <button type="button" className="send-button stop-button" onClick={() => { canceledRef.current = true; void cancelGeneration(); }} title="Stop generation" aria-label="Stop generation"><StopCircle size={19}/></button> : <button type="submit" className="send-button" disabled={!draft.trim()} title={engine.running ? "Send prompt" : "Save prompt"} aria-label={engine.running ? "Send prompt" : "Save prompt"}><ArrowUp size={19}/></button>}
         </div>
-      </form><div className="composer-caption">{engine.running ? "Enter to send · Shift+Enter for a new line · CPU only" : "Enter to save · Shift+Enter for a new line · Load a model in Settings"}</div></div>
+      </form><div className="composer-caption">{engine.running ? "Enter to send · Shift+Enter for a new line · Local inference" : "Enter to save · Shift+Enter for a new line · Load a model in Settings"}</div></div>
     </main>
 
     {detailsOpen && <aside className="details-pane" aria-label="Workspace details">
@@ -833,7 +881,7 @@ export default function App() {
             </> : <div className="detail-empty"><Folder size={24}/><p>No project selected</p><span>Add a project folder to associate conversations with real work.</span><button onClick={addProject}>Choose folder <ArrowRight size={14}/></button></div>}</div>
         </>}
       </div>
-      <div className="detail-footer"><div><span className="footer-small-dot"/> Local-first workspace</div><span>0.3.11</span></div>
+      <div className="detail-footer"><div><span className="footer-small-dot"/> Local-first workspace</div><span>0.3.19</span></div>
     </aside>}
     {(notice || storageWarning || preferencesWarning) && <div className="toast" role="alert"><Info size={17}/><span>{storageWarning ? (isTauri() ? "Unable to save the native workspace database. New changes may not survive restarting the app." : "Local storage is unavailable or full. Changes may not survive restarting the app.") : preferencesWarning ? "Some model preferences could not be saved in WebView storage. Your conversations use the separate native database." : notice}</span><button aria-label="Dismiss notification" onClick={() => { setNotice(""); setStorageWarning(false); setPreferencesWarning(false); }}><X size={16}/></button></div>}
     {batchProposal && <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget && !batchBusy)setBatchProposal(null);}}>
