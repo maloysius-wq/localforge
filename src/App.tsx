@@ -660,8 +660,10 @@ export default function App() {
         }
         const { task, messages: codeMessages, projectContext } = prepareGeneration(content,history,snapshot,contextTokens);
         // Exactly one model inference per user prompt: no code-format retry or repair prompt.
-        const reply = await generate(requestId, codeMessages, projectContext, !!task);
+        const result = await generate(requestId, codeMessages, projectContext, !!task);
+        const reply = result.text;
         const verification = task?.target === "html" && !canceledRef.current
+          && result.meta.finishReason !== "length" && result.meta.doneMarker
           ? verifyFirstPassWeb(reply, task.originalRequest + "\n" + content) : null;
         if (canceledRef.current) {
           setNotice("Generation stopped. No partial file was saved.");
@@ -670,28 +672,33 @@ export default function App() {
         if (reply.trim()) {
           const candidates = extractProposedFiles(reply,content);
           const staticFailed=verification?.report?.passed === false;
-          const validated = (!task || containsImplementation(reply, task.target)
-            || (Boolean(activeProject) && candidates.files.length > 1)) && !staticFailed;
-          const finalText = staticFailed
-            ? "⚠ First-pass source checks failed. No automatic repair was attempted.\n"
-              + summarizeQuality(verification!.report) + "\n\nThis code has NOT been approved or written.\n\n" + reply
-            : validated ? reply
-            : "⚠ First-pass output did not contain a complete code implementation. No automatic retry was attempted.\n\n" + reply;
+          const containsCode = !task || containsImplementation(reply, task.target)
+            || (Boolean(activeProject) && candidates.files.length > 1);
+          const decision = reviewGeneration(reply,result.meta,!!task,containsCode,staticFailed);
+          const validated = decision.accepted;
+          void recordGenerationReview(requestId,decision.outcome,decision.closedFences,candidates.files.length).catch(() => {});
+          const finalText = !validated
+            ? "⚠ " + decision.warning + (staticFailed
+              ? "\n" + summarizeQuality(verification!.report) : "")
+              + "\n\nThis partial response has NOT been approved or written.\n\n" + reply
+            : reply;
           const completedAt = Date.now();
           const answer: ChatMessage = { id: newId(), role: "assistant", content: finalText,
             createdAt: completedAt, durationMs: Math.max(0, completedAt - startedAt) };
           setWorkspace(state => record({ ...state, threads: state.threads.map(t => t.id === threadId
             ? { ...t, messages: [...t.messages, answer], updatedAt: Date.now() } : t) },
             validated ? "Local model response received" : "Local model returned no complete implementation"));
-          if (!validated) setNotice(staticFailed
-            ? "First-pass static verification failed. No code was automatically staged."
-            : "Model did not produce usable code. No changes were automatically staged.");
+          if (!validated) setNotice(decision.warning);
           else if (task && activeProject) {
             if (activeProjectIdRef.current !== activeProject.id) {
               setNotice("The active project changed while generating. No file changes were staged.");
+              void recordGenerationReview(requestId,"staging_not_possible",decision.closedFences,candidates.files.length).catch(() => {});
               return;
             }
-            if (candidates.error) setNotice(candidates.error);
+            if (candidates.error) {
+              setNotice(candidates.error);
+              void recordGenerationReview(requestId,"staging_not_possible",decision.closedFences,candidates.files.length).catch(() => {});
+            }
             else if (candidates.files.length) {
               try {
                 const originals = await Promise.all(candidates.files.map(edit =>
@@ -699,10 +706,20 @@ export default function App() {
                 setBatchProposal({projectId:activeProject.id,root:activeProject.path,
                   edits:candidates.files.map((edit,index)=>({...edit,original:originals[index]}))});
                 setNotice("");
-              } catch (error) { setNotice("Cannot stage the proposed files: "+String(error)); }
-            } else setNotice("Model produced source, but it could not be staged automatically.");
+                void recordGenerationReview(requestId,"staged",decision.closedFences,candidates.files.length).catch(() => {});
+              } catch (error) {
+                setNotice("Cannot stage the proposed files: "+String(error));
+                void recordGenerationReview(requestId,"staging_failed",decision.closedFences,candidates.files.length).catch(() => {});
+              }
+            } else {
+              setNotice("Model produced source, but it could not be staged automatically.");
+              void recordGenerationReview(requestId,"staging_not_possible",decision.closedFences,candidates.files.length).catch(() => {});
+            }
           } else setNotice("");
-        } else setNotice("The local model returned no text. Try again or unload and reload it.");
+        } else {
+          void recordGenerationReview(requestId,"no_visible_text",true,0).catch(() => {});
+          setNotice("The model returned no visible text. Copy generation diagnostics from Settings to see why.");
+        }
       } catch (error) { setNotice("Generation failed: " + String(error)); }
       finally { pendingRef.current = null; setLiveText(""); setGenerating(false); }
     })();
