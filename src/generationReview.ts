@@ -13,7 +13,7 @@ export type GenerationMetadata = {
 };
 export type GenerationResult = { text: string; meta: GenerationMetadata };
 export type ReviewOutcome =
-  | "accepted" | "rejected_output_limit" | "rejected_runtime_limit" | "rejected_incomplete_stream"
+  | "accepted" | "rejected_output_limit" | "rejected_runtime_limit" | "rejected_repetition" | "rejected_incomplete_stream"
   | "rejected_unclosed_fence" | "rejected_no_implementation"
   | "rejected_static_checks" | "no_visible_text"
   | "staged" | "staging_failed" | "staging_not_possible";
@@ -33,6 +33,8 @@ export function reviewGeneration(
   const closedFences = fenceStarts === fenceEnds;
   if (!text.trim()) return { outcome: "no_visible_text", accepted: false, closedFences,
     warning: "The model produced no visible response. Copy the generation diagnostics in Settings." };
+  if (meta.finishReason === "repetition") return { outcome:"rejected_repetition", accepted:false, closedFences,
+    warning:"Bonsai began repeating a substantial block of output, so LocalForge stopped the loop to avoid wasting hours. Your partial answer was saved in this conversation, but it is incomplete and was NOT staged or written to project files. No output-token or time cap was reached." };
   if (meta.finishReason === "length") {
     if (meta.outputLimit === -1) {
       return { outcome:"rejected_runtime_limit", accepted:false, closedFences,

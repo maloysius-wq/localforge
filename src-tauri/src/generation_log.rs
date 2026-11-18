@@ -143,6 +143,7 @@ impl GenerationTrace {
     pub(crate) fn completed(&mut self, canceled: bool) -> GenerationMeta {
         self.phase = "complete";
         self.outcome = if canceled { "cancelled" }
+            else if self.meta.finish_reason.as_deref() == Some("repetition") { "repetition_detected" }
             else if self.meta.finish_reason.as_deref() == Some("length") {
                 if self.meta.output_limit == -1 { "model_context_exhausted" }
                 else { "output_limit" }
@@ -193,7 +194,7 @@ struct ReviewRecord<'a> {
 pub(crate) fn record_review(app: &AppHandle, review: Review) -> Result<(), String> {
     if !valid_request_id(&review.request_id) { return Err("Invalid diagnostic request identifier".into()); }
     if ![
-        "accepted", "rejected_output_limit", "rejected_runtime_limit", "rejected_incomplete_stream",
+        "accepted", "rejected_output_limit", "rejected_runtime_limit", "rejected_repetition", "rejected_incomplete_stream",
         "rejected_unclosed_fence", "rejected_no_implementation", "rejected_static_checks",
         "no_visible_text", "staged", "staging_failed", "staging_not_possible",
     ].contains(&review.outcome.as_str()) || review.proposed_files > 500 {
