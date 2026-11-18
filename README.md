@@ -4,6 +4,14 @@
 
 LocalForge is an open-source project toward a compact, shared coding model with Python, web, desktop, mobile, and eventually pixel-art specialties. The interface resembles a desktop coding agent, but the initial releases deliberately add capabilities one by one with clear status reporting and local privacy safeguards.
 
+## v0.3.18: remove arbitrary Bonsai generation and time limits
+
+- A real GTX 1060 field log from v0.3.17 showed exactly `4096/4096` generated tokens, `finishReason=length`, `doneMarker=true`, a 32,768-token context with only 1,187 input tokens, 11,846 visible code characters and a 627-second request. This **proves LocalForge's configured response-token ceiling**, not a GPU crash, context exhaustion or malformed SSE.
+- For experimental Bonsai CUDA, `max_tokens=-1` is now sent to the pinned PrismML llama.cpp server for all requests, allowing the model to stop naturally at EOS. The native client applies **no overall generation-time timeout** to Bonsai. Its pinned server supports automatic context shifting on models with shiftable KV memory; a 32K context is still a physical context/window limit and true runtime inability to shift must be reported, not concealed. This is not literally infinite hardware memory or guaranteed model completion.
+- The streaming and HTTP-header waits now select on explicit user cancellation so **Stop** remains responsive even during a long-running request without incoming output. Separate 60-second diagnostics/tokenization preflight calls still time out harmlessly; CPU inference retains its original 1,536/3,072 output limits and 15-minute request timeout.
+- Structured diagnostics represent `outputLimit=-1` for Bonsai. `finishReason=length` under unlimited output is labeled a **runtime/model context limit**, not a false application-imposed output cap. Truly incomplete code is never automatically staged or written. Original manual file review, approvals and undo remain unchanged, and no retries or automated correction loops were added.
+- No new model download required; Windows/Linux tests and published installers must pass before upgrading. User can run generations for hours and stop manually, subject to PC uptime, RAM/VRAM and PrismML runtime behavior.
+
 ## v0.3.17: structured diagnostics for truncated generations
 
 - **Why:** Bonsai 27B on GTX 1060 wrote substantial code, then stopped partway through; the UI's generic "model did not produce usable code" could not distinguish token cap, unclosed code fence, truncated SSE stream, static source-check failures or a poor model response. No raw stream/log from this specific incident was available, so the exact cause is unconfirmed.
