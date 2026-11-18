@@ -491,6 +491,56 @@ impl Drop for GenerationGuard<'_> {
         inner.cancel = None;
     }
 }
+
+#[derive(Default)]
+struct CompletionEvidence {
+    reasoning_chunks: usize,
+    completion_tokens: Option<u64>,
+    finish_reason: Option<&'static str>,
+    error_frame: bool,
+}
+impl CompletionEvidence {
+    // Only count separate thinking tokens; never display/store raw reasoning.
+    fn observe<'a>(&mut self, event: &'a serde_json::Value) -> Option<&'a str> {
+        if event.get("error").is_some() { self.error_frame = true; }
+        if let Some(n) = event.pointer("/usage/completion_tokens").and_then(|v| v.as_u64()) {
+            self.completion_tokens = Some(n);
+        }
+        if let Some(reason) = event.pointer("/choices/0/finish_reason").and_then(|v| v.as_str()) {
+            self.finish_reason = Some(match reason {
+                "length" => "length", "stop" => "stop", "tool_calls" => "tool_calls",
+                _ => "other",
+            });
+        }
+        if event.pointer("/choices/0/delta/reasoning_content").and_then(|v| v.as_str())
+            .is_some_and(|v| !v.is_empty()) {
+            self.reasoning_chunks = self.reasoning_chunks.saturating_add(1);
+        }
+        event.pointer("/choices/0/delta/content").and_then(|v| v.as_str())
+    }
+    fn empty_reply_error(&self, output_limit: u32) -> String {
+        let usage = self.completion_tokens
+            .map(|n| format!("{n} generated tokens"))
+            .unwrap_or_else(|| format!("up to {output_limit} output tokens allowed"));
+        if self.error_frame {
+            return "The inference server returned an error event instead of final text. Inspect llama-server.log for a runtime or memory failure.".to_owned();
+        }
+        if self.reasoning_chunks > 0 {
+            return format!(
+                "The model generated thinking but no final answer ({usage}; finish reason {}). No thinking content was displayed or stored. \
+                 The Bonsai reasoning budget is now limited; try a smaller task if it persists.",
+                self.finish_reason.unwrap_or("unknown")
+            );
+        }
+        if self.finish_reason == Some("length") {
+            return format!("The model reached its output limit ({usage}) without visible text. Try a shorter request or inspect llama-server.log.");
+        }
+        format!(
+            "The model returned no visible completion text ({usage}; finish reason {}). Inspect llama-server.log for details.",
+            self.finish_reason.unwrap_or("unknown")
+        )
+    }
+}
 #[tauri::command]
 async fn generate(app: AppHandle, engine: State<'_, Engine>, request_id: String, messages: Vec<ChatMessage>, project_context: Option<String>, code_only: bool) -> Result<String, String> {
     if messages.is_empty() || messages.len() > 40 { return Err("Invalid conversation length".into()); }
@@ -560,6 +610,7 @@ async fn generate(app: AppHandle, engine: State<'_, Engine>, request_id: String,
     let mut stream = response.bytes_stream();
     let mut buffer = Vec::<u8>::new();
     let mut output = String::new();
+    let mut evidence = CompletionEvidence::default();
     while let Some(chunk) = stream.next().await {
         if cancel.load(Ordering::Relaxed) { break; }
         let bytes = chunk.map_err(|e| format!("Response interrupted: {e}"))?;
@@ -582,13 +633,18 @@ async fn generate(app: AppHandle, engine: State<'_, Engine>, request_id: String,
                             });
                         }
                     }
-                    if let Some(text) = event.pointer("/choices/0/delta/content").and_then(|v| v.as_str()) {
-                        output.push_str(text);
-                        let _ = app.emit("model-token", TokenEvent { request_id: request_id.clone(), delta: text.to_owned() });
+                    if let Some(text) = evidence.observe(&event) {
+                        if !text.is_empty() {
+                            output.push_str(text);
+                            let _ = app.emit("model-token", TokenEvent { request_id: request_id.clone(), delta: text.to_owned() });
+                        }
                     }
                 }
             }
         }
+    }
+    if !cancel.load(Ordering::Relaxed) && output.trim().is_empty() {
+        return Err(evidence.empty_reply_error(output_limit));
     }
     Ok(output)
 }
@@ -755,6 +811,28 @@ mod prompt_tests {
                 assert_eq!(validate_backend(Some("cuda"), context).unwrap(), "cuda");
             }
         } else { assert!(validate_backend(Some("cuda"), 32768).is_err()); }
+    }
+    #[test]
+    fn bonsai_response_limit_preserves_space_for_final_code() {
+        assert_eq!(generation_limit(Some("cuda"), true, 32768), 4096);
+        assert_eq!(generation_limit(Some("cuda"), false, 32768), 2048);
+        assert_eq!(generation_limit(Some("cuda"), true, 4096), 2048);
+        assert_eq!(generation_limit(Some("cpu"), true, 32768), MAX_CODE_GENERATION_TOKENS);
+    }
+    #[test]
+    fn reasoning_only_sse_is_not_silent_success_or_leaked_trace() {
+        let mut evidence = CompletionEvidence::default();
+        assert_eq!(evidence.observe(&serde_json::json!({"choices":[{"delta":{"reasoning_content":"sensitive private thought"},"finish_reason":null}]})), None);
+        assert_eq!(evidence.observe(&serde_json::json!({"choices":[{"delta":{},"finish_reason":"length"}]})), None);
+        evidence.observe(&serde_json::json!({"usage":{"completion_tokens":3072},"choices":[]}));
+        let msg = evidence.empty_reply_error(3072);
+        assert!(msg.contains("thinking but no final answer"));
+        assert!(msg.contains("3072 generated tokens"));
+        assert!(!msg.contains("sensitive private thought"));
+        assert_eq!(evidence.observe(&serde_json::json!({"choices":[{"delta":{"content":"Visible reply"},"finish_reason":"stop"}]})), Some("Visible reply"));
+        let mut err = CompletionEvidence::default();
+        err.observe(&serde_json::json!({"error":{"message":"sensitive content"}}));
+        assert!(!err.empty_reply_error(1536).contains("sensitive content"));
     }
     #[test]
     fn refuses_non_user_last_turn_and_oversize_prompts() {
