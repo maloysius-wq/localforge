@@ -10,6 +10,17 @@ describe("generation diagnostics classification", () => {
     expect(v.accepted).toBe(false);
     expect(v.warning).toContain("4096");
   });
+  it("does not mislabel an unlimited model runtime stop as an app token cap", () => {
+    const m = {...meta, outputLimit:-1, finishReason:"length"};
+    const result = reviewGeneration("```python\nprint(1)\n```",m,true,true,false);
+    expect(result.outcome).toBe("rejected_runtime_limit");
+    expect(result.accepted).toBe(false);
+    expect(result.warning).toContain("no output-token cap");
+  });
+  it("accepts a normally completed unlimited stream", () => {
+    const m = {...meta, outputLimit:-1};
+    expect(reviewGeneration("```python\nprint(1)\n```",m,true,true,false).accepted).toBe(true);
+  });
   it("rejects abruptly ended streams", () => {
     expect(reviewGeneration("<html>ready</html>",{...meta,doneMarker:false},true,true,false).outcome)
       .toBe("rejected_incomplete_stream");

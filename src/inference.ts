@@ -18,7 +18,7 @@ export const getModelInfo = (modelId: CatalogModelId, downloadDir: string | null
 export const downloadModel = (modelId: CatalogModelId, downloadDir: string | null) => invoke<ModelInfo>("download_model", { modelId, downloadDir });
 export const startModel = (modelPath: string | null, threads: number, contextTokens: number, backend: "cpu" | "cuda" = "cpu") => invoke<EngineStatus>("start_model", { modelPath, threads, contextTokens, backend });
 export const stopModel = () => invoke<EngineStatus>("stop_model");
-export const generate = (requestId: string, messages: GenerationMessage[], projectContext: string | null = null, codeOnly = false, codeOutputTokens?: number) => invoke<GenerationResult>("generate", { requestId, messages, projectContext, codeOnly, codeOutputTokens });
+export const generate = (requestId: string, messages: GenerationMessage[], projectContext: string | null = null, codeOnly = false) => invoke<GenerationResult>("generate", { requestId, messages, projectContext, codeOnly });
 export const cancelGeneration = () => invoke<void>("cancel_generation");
 export const onToken = (handler: (value: TokenEvent) => void) => listen<TokenEvent>("model-token", e => handler(e.payload));
 export const onDownload = (handler: (value: DownloadProgress) => void) => listen<DownloadProgress>("model-download", e => handler(e.payload));
