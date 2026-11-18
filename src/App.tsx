@@ -24,7 +24,7 @@ import { ContextRing } from "./ContextRing";
 import { extractProposedFiles } from "./autoEdits";
 import { verifyFirstPassWeb, summarizeQuality } from "./verificationFlow";
 import { formatGenerationDuration } from "./generationTime";
-import { BONSAI_DEFAULT_CONTEXT_TOKENS, DEFAULT_CONTEXT_TOKENS, restoredContextTokens, validContextTokens, contextBudget } from "./contextConfig";
+import { BONSAI_DEFAULT_CONTEXT_TOKENS, DEFAULT_CONTEXT_TOKENS, restoredContextTokens, contextBudget } from "./contextConfig";
 import { inspectProject, readProjectFile, applyProjectChange, undoProjectChange, applyProjectChanges, undoProjectChanges, suggestFilename,
   type ProjectSnapshot, type ProjectFile } from "./projectTools";
 import { checkForUpdates, installUpdate, onUpdateProgress, type UpdateInfo } from "./updates";
