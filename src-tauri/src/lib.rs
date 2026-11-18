@@ -531,10 +531,12 @@ impl CompletionEvidence {
         }
         event.pointer("/choices/0/delta/content").and_then(|v| v.as_str())
     }
-    fn empty_reply_error(&self, output_limit: u32) -> String {
+    fn empty_reply_error(&self, output_limit: i32) -> String {
         let usage = self.completion_tokens
             .map(|n| format!("{n} generated tokens"))
-            .unwrap_or_else(|| format!("up to {output_limit} output tokens allowed"));
+            .unwrap_or_else(|| if output_limit == -1 {
+                "no application-side output-token limit".to_string()
+            } else { format!("up to {output_limit} output tokens allowed") });
         if self.error_frame {
             return "The inference server returned an error event instead of final text. Inspect llama-server.log for a runtime or memory failure.".to_owned();
         }
