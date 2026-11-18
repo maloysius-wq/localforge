@@ -67,6 +67,12 @@ fn context_budget(tokens: u32) -> usize {
 }
 const MAX_GENERATION_TOKENS: u32 = 1536;
 const MAX_CODE_GENERATION_TOKENS: u32 = 3072;
+fn generation_limit(backend: Option<&str>, code: bool, context: u32) -> u32 {
+    if backend == Some("cuda") {
+        if code && context >= 8192 { 4096 } else { 2048.min(context / 2) }
+    } else if code { MAX_CODE_GENERATION_TOKENS }
+    else { MAX_GENERATION_TOKENS }
+}
 
 
 #[derive(Default)]
@@ -368,7 +374,11 @@ async fn start_model(app: AppHandle, engine: State<'_, Engine>, model_path: Opti
             // --verbose (unbounded debug, including potentially sensitive data).
             command.arg("--log-verbosity").arg(gpu_diagnostics::GPU_LOG_VERBOSITY)
                 .arg("--batch-size").arg("128").arg("--ubatch-size").arg("64")
-                .arg("--flash-attn").arg("off").arg("--device").arg("CUDA0");
+                .arg("--flash-attn").arg("off").arg("--device").arg("CUDA0")
+                // The pinned PrismML runtime defaults to unlimited thinking.
+                // Reserve output space for the final answer on 6GB GPUs.
+                .arg("--reasoning-budget").arg("384")
+                .arg("--reasoning-format").arg("deepseek");
             if bonsai_host_kv(context_tokens) {
                 // A 32K FP16 KV cache does not reliably fit the remaining VRAM
                 // of a 6GB Pascal card after loading Bonsai's model weights.
@@ -484,7 +494,7 @@ impl Drop for GenerationGuard<'_> {
 #[tauri::command]
 async fn generate(app: AppHandle, engine: State<'_, Engine>, request_id: String, messages: Vec<ChatMessage>, project_context: Option<String>, code_only: bool) -> Result<String, String> {
     if messages.is_empty() || messages.len() > 40 { return Err("Invalid conversation length".into()); }
-    let (port, key, cancel, context_tokens) = {
+    let (port, key, cancel, context_tokens, backend) = {
         let mut inner = engine.inner.lock().unwrap_or_else(|p| p.into_inner());
         if inner.generating { return Err("Generation already in progress".into()); }
         let port = inner.port.ok_or("Load a model first")?;
@@ -492,14 +502,14 @@ async fn generate(app: AppHandle, engine: State<'_, Engine>, request_id: String,
         inner.generating = true;
         let cancel = Arc::new(AtomicBool::new(false));
         inner.cancel = Some(cancel.clone());
-        (port, key, cancel, inner.context_tokens.unwrap_or(DEFAULT_CONTEXT_TOKENS))
+        (port, key, cancel, inner.context_tokens.unwrap_or(DEFAULT_CONTEXT_TOKENS), inner.backend.clone())
     };
     let _guard = GenerationGuard(&engine);
     let mut conversation = build_conversation(messages, project_context, context_tokens)?;
     if code_only {
         conversation[0]["content"] = serde_json::json!(CODE_FIRST_SYSTEM_PROMPT);
     }
-    let output_limit = if code_only { MAX_CODE_GENERATION_TOKENS } else { MAX_GENERATION_TOKENS };
+    let output_limit = generation_limit(backend.as_deref(), code_only, context_tokens);
     let client = reqwest::Client::builder().timeout(Duration::from_secs(900)).build().map_err(|e| e.to_string())?;
     // Count the actual model-chat template with the local GGUF tokenizer,
     // not a guessed characters-per-token conversion. These calls never leave
@@ -532,8 +542,19 @@ async fn generate(app: AppHandle, engine: State<'_, Engine>, request_id: String,
             return Err(format!("The current prompt uses {count} of {context_tokens} context tokens, leaving insufficient space for code generation. Reduce the project source or use a larger context window"));
         }
     }
+    // Model-specific sampling: keep existing CPU settings unchanged.
+    // Prism ML recommends temperature=0.7, top_p=0.95, top_k=20.
+    let payload = if backend.as_deref() == Some("cuda") {
+        serde_json::json!({"messages":conversation,"stream":true,
+            "stream_options":{"include_usage":true},"max_tokens":output_limit,
+            "temperature":0.7,"top_p":0.95,"top_k":20})
+    } else {
+        serde_json::json!({"messages":conversation,"stream":true,
+            "stream_options":{"include_usage":true},"max_tokens":output_limit,
+            "temperature":0.1})
+    };
     let response = client.post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
-        .bearer_auth(&key).json(&serde_json::json!({"messages":conversation,"stream":true,"stream_options":{"include_usage":true},"max_tokens":output_limit,"temperature":0.1}))
+        .bearer_auth(&key).json(&payload)
         .send().await.map_err(|e| format!("Model communication failed: {e}"))?;
     if !response.status().is_success() { return Err(format!("Model returned HTTP {}", response.status())); }
     let mut stream = response.bytes_stream();
