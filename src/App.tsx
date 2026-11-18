@@ -24,7 +24,7 @@ import { ContextRing } from "./ContextRing";
 import { extractProposedFiles } from "./autoEdits";
 import { verifyFirstPassWeb, summarizeQuality } from "./verificationFlow";
 import { formatGenerationDuration } from "./generationTime";
-import { DEFAULT_CONTEXT_TOKENS, validContextTokens, contextBudget } from "./contextConfig";
+import { BONSAI_DEFAULT_CONTEXT_TOKENS, DEFAULT_CONTEXT_TOKENS, restoredContextTokens, validContextTokens, contextBudget } from "./contextConfig";
 import { inspectProject, readProjectFile, applyProjectChange, undoProjectChange, applyProjectChanges, undoProjectChanges, suggestFilename,
   type ProjectSnapshot, type ProjectFile } from "./projectTools";
 import { checkForUpdates, installUpdate, onUpdateProgress, type UpdateInfo } from "./updates";
@@ -186,7 +186,7 @@ function SettingsModal({ theme, setTheme, onClose, engine, model, progress, down
       <div className="settings-section"><h3>Privacy and safety</h3>
         <div className="setting-summary"><ShieldCheck size={18}/><div><strong>Your data stays on this computer</strong><span>Chats stay local. Your selected project can be inspected on request and edited only after approving each proposed file change. No shell execution. Update checks reach the official GitHub API on request.</span></div></div>
       </div>
-      <div className="settings-footer">LocalForge 0.3.14 · offline coding workspace</div>
+      <div className="settings-footer">LocalForge 0.3.15 · offline coding workspace</div>
     </section>
   </div>;
 }
@@ -226,10 +226,13 @@ export default function App() {
     return Number.isInteger(n) && n >= 1 && n <= 16 ? n : 2;
   });
   const [contextTokens, setContextTokens] = useState(() => {
-    const n = Number(localStorage.getItem("localforge.context-tokens.v1") || DEFAULT_CONTEXT_TOKENS);
-    return validContextTokens(n) ? n : DEFAULT_CONTEXT_TOKENS;
+    const saved = localStorage.getItem("localforge.context-tokens.v1") || DEFAULT_CONTEXT_TOKENS;
+    return restoredContextTokens(saved, isGpuModel(modelId), localStorage.getItem("localforge.bonsai-context-migrated.v1") !== "true");
   });
   const [autoLoad, setAutoLoad] = useState(() => localStorage.getItem("localforge.auto-load.v1") !== "false");
+  useEffect(() => {
+    if (isGpuModel(modelId)) localStorage.setItem("localforge.bonsai-context-migrated.v1", "true");
+  }, [modelId]);
   const [fullscreen, setFullscreen] = useState(false);
   const startupRef = useRef<Promise<[EngineStatus, ModelInfo]> | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -397,7 +400,8 @@ export default function App() {
   }, [modelId, downloadDir]);
 
   function selectCatalogModel(value: CatalogModelId) {
-    if (isGpuModel(value)) setContextTokens(4096);
+    if (isGpuModel(value)) setContextTokens(BONSAI_DEFAULT_CONTEXT_TOKENS);
+    else if (isGpuModel(modelId)) setContextTokens(DEFAULT_CONTEXT_TOKENS);
     setModelId(value);
     setModelPath(null);
     setProgress(null);

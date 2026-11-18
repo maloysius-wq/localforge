@@ -1,6 +1,6 @@
 [package]
 name = "localforge"
-version = "0.3.14"
+version = "0.3.15"
 description = "LocalForge offline coding workspace with optional NVIDIA CUDA"
 authors = ["LocalForge contributors"]
 edition = "2021"

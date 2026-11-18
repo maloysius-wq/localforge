@@ -4,6 +4,14 @@
 
 LocalForge is an open-source project toward a compact, shared coding model with Python, web, desktop, mobile, and eventually pixel-art specialties. The interface resembles a desktop coding agent, but the initial releases deliberately add capabilities one by one with clear status reporting and local privacy safeguards.
 
+## v0.3.15: Bonsai 32K context on 6GB GPUs
+
+- Bonsai's model architecture supports far more than 4,096 tokens; the previous limit was a conservative hardware-validation setting, not a model limitation. The user successfully loaded and generated with Bonsai but quickly exhausted the 4K coding window.
+- **Bonsai now defaults to 32,768 tokens**, with selectable 4K, 8K, 16K and 32K options. Existing Bonsai users with the old forced 4K setting are migrated once to 32K; later explicitly chosen 4K settings are respected. Switching away from Bonsai resets to the CPU low-RAM default rather than carrying 32K onto smaller CPU models.
+- For 8K–32K contexts, the native CUDA launcher adds `--no-kv-offload` and `--fit off`. These options are verified against the exact pinned PrismML runtime CLI. The FP16 KV cache lives in **system RAM** to avoid consuming the GTX 1060's 6GB VRAM; the model still requests 99 CUDA layers. Long-context inference may run substantially slower, and memory/scratch usage still requires real hardware testing. Unlike automatic fit reduction, `--fit off` rejects an unworkable 32K context rather than silently shrinking it.
+- UI and Rust input budgets were increased for 32K, while the existing exact-model token-count safeguard, local-only model/server, per-file approval, and CPU path remain. The GGUF does not need re-downloading.
+- v0.3.15 requires Windows installer validation, then a real 32K Bonsai test on the i7-6700/16GB/GTX1060 hardware. If CPU-backed attention is too slow, prefer 16K or 8K, or optimize cache quantization after benchmarking.
+
 ## v0.3.14: fix Bonsai GPU logging level after GTX 1060 field log
 
 - Real Bonsai 27B startup logs from the GTX 1060 showed the PrismML server **loaded and listening** in about four seconds, but had **no native GPU device or model-layer allocation lines**. The runtime printed `verbosity = 3`.

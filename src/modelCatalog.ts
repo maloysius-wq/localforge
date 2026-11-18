@@ -31,7 +31,7 @@ export const MODEL_CATALOG = [
     size: "~3.8 GB",
     license: "Apache 2.0",
     source: "Prism ML official GGUF",
-    description: "Experimental Windows NVIDIA CUDA option. Manually loaded, 4K context; 6GB GTX 1060 must be tested in person.",
+    description: "Experimental Windows NVIDIA CUDA option. Manually loaded, selectable 4K–32K context with RAM-backed KV cache at 8K+ for 6GB GPUs; long-context speed requires hardware testing.",
   },
 ] as const;
 export const isGpuModel = (id: CatalogModelId) => id === "bonsai-27b-q1";

@@ -1,6 +1,6 @@
 import { Cpu, Download, FolderOpen, HardDrive, LoaderCircle, Play, Square } from "lucide-react";
 import type { DownloadProgress, EngineStatus, ModelInfo } from "./inference";
-import { CONTEXT_CHOICES } from "./contextConfig";
+import { CONTEXT_CHOICES, BONSAI_CONTEXT_CHOICES } from "./contextConfig";
 import { MODEL_CATALOG, isGpuModel, type CatalogModelId } from "./modelCatalog";
 
 export function ModelManager({ engine, model, progress, downloading, busy, modelPath, modelId, setModelId,
@@ -45,7 +45,7 @@ export function ModelManager({ engine, model, progress, downloading, busy, model
       </select>
       <p>{selectedSpec.description} <strong>{selectedSpec.license}</strong> · {selectedSpec.source}.</p>
       {modelId === "qwen25-coder-3b" && <p className="model-caution" role="note">Research license: this candidate is for permitted noncommercial evaluation, not a default commercial distribution model.</p>}
-      {gpu && <p className="model-caution" role="note"><strong>Experimental NVIDIA CUDA 12.4, Windows x64 only.</strong> Requires a compatible NVIDIA driver, adequate free VRAM and the bundled Prism runtime. GTX 1060 Pascal support is not yet field-verified. No silent CPU fallback. Load manually, at 4,096 tokens.</p>}
+      {gpu && <p className="model-caution" role="note"><strong>Experimental NVIDIA CUDA 12.4, Windows x64 only.</strong> Requires a compatible NVIDIA driver, free VRAM and the bundled Prism runtime. 32K context is available, using system RAM for its attention cache on 6GB GPUs; longer prompts may be substantially slower. No silent CPU fallback. Load manually.</p>}
     </div>
     <div className="model-option">
       <label><strong>Download folder</strong></label>
@@ -86,10 +86,11 @@ export function ModelManager({ engine, model, progress, downloading, busy, model
     </div>
     <div className="model-option">
       <label htmlFor="context-window"><strong>Context window</strong></label>
-      <p>{gpu ? "Experimental Bonsai mode is restricted to 4,096 tokens on 6GB GPUs." : "More context retains more code and history, but increases RAM use and CPU prefill time. Unload the model to change it."}</p>
+      <p>{gpu ? "Bonsai supports 4K, 8K, 16K and 32K. At 8K and above, the attention cache uses system RAM to protect 6GB GPU memory; long prompts can be much slower. Unload the model to change it." : "More context retains more code and history, but increases RAM use and CPU prefill time. Unload the model to change it."}</p>
       <select id="context-window" value={contextTokens} disabled={busy || engine.running} onChange={e => setContextTokens(Number(e.target.value))}>
-        {CONTEXT_CHOICES.filter(n => !gpu || n === 4096).map(n => <option key={n} value={n}>{n.toLocaleString()} tokens{n === 65536 ? " (64K experimental on Qwen2.5)" : n === 6144 ? " (low-RAM default)" : ""}</option>)}
+        {(gpu ? BONSAI_CONTEXT_CHOICES : CONTEXT_CHOICES).map(n => <option key={n} value={n}>{n.toLocaleString()} tokens{n === 65536 ? " (64K experimental on Qwen2.5)" : n === 6144 ? " (low-RAM default)" : ""}</option>)}
       </select>
+      {gpu && contextTokens >= 8192 && <p className="model-caution" role="note">On 6GB GPUs, the KV cache will be held in system RAM at this context. If initialization runs out of RAM or is unacceptably slow, select 16K or 8K and reload.</p>}
       {contextTokens === 65536 && <p className="model-caution" role="note"><strong>64K caution:</strong> Qwen2.5-Coder requires experimental YaRN scaling above 32K. Large contexts can exhaust RAM. The 4B candidate has not been validated at this context.</p>}
       {engine.running && <small className="model-selected">Unload the model before changing the context window.</small>}
     </div>
@@ -100,7 +101,7 @@ export function ModelManager({ engine, model, progress, downloading, busy, model
         ? <button type="button" className="model-action primary" onClick={onLoad} disabled={!selected || busy || downloading}>
           {busy ? <LoaderCircle size={15}/> : <Play size={15}/>} {busy ? "Loading model…" : "Load model"}</button>
         : <button type="button" className="model-action secondary" onClick={onUnload} disabled={busy || engine.generating}><Square size={15}/> Unload model</button>}
-      <span className="engine-hint"><HardDrive size={14}/> {contextTokens.toLocaleString()}-token context · {gpu ? "GPU offload: 99 layers requested" : "GPU layers: 0"}</span>
+      <span className="engine-hint"><HardDrive size={14}/> {contextTokens.toLocaleString()}-token context · {gpu ? `GPU weights; ${contextTokens >= 8192 ? "RAM KV cache" : "GPU KV cache"}` : "GPU layers: 0"}</span>
     </div>
     <p className="model-caution">CPU candidates use the original offline CPU runtime. Bonsai uses a separate experimental, bundled CUDA runtime on Windows only. These are not validated app builders. Project file writes still require approval; shell and app execution remain disabled.</p>
   </div>;
