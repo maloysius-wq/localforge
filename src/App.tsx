@@ -24,6 +24,7 @@ import { ContextRing } from "./ContextRing";
 import { extractProposedFiles } from "./autoEdits";
 import { verifyFirstPassWeb, summarizeQuality } from "./verificationFlow";
 import { formatGenerationDuration } from "./generationTime";
+import { reviewGeneration } from "./generationReview";
 import { BONSAI_DEFAULT_CONTEXT_TOKENS, DEFAULT_CONTEXT_TOKENS, restoredContextTokens, contextBudget } from "./contextConfig";
 import { inspectProject, readProjectFile, applyProjectChange, undoProjectChange, applyProjectChanges, undoProjectChanges, suggestFilename,
   type ProjectSnapshot, type ProjectFile } from "./projectTools";
@@ -32,6 +33,7 @@ import {
   type DownloadProgress, type EngineStatus, type ModelInfo, emptyStatus, emptyModel,
   getStatus, getModelInfo, downloadModel, startModel, stopModel,
   cancelGeneration, generate, onToken, onDownload, onContextUsage,
+  getGenerationDiagnostics, recordGenerationReview,
 } from "./inference";
 
 type Tab = "activity" | "project";
@@ -140,6 +142,34 @@ function UpdateSettings() {
   </div>;
 }
 
+function GenerationDiagnosticSettings() {
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function copyReport() {
+    setBusy(true); setStatus("");
+    try {
+      if (!isTauri()) {
+        setStatus("Diagnostics are available in the installed desktop application.");
+        return;
+      }
+      const report = await getGenerationDiagnostics();
+      await navigator.clipboard.writeText(report);
+      setStatus("Diagnostic report copied. Paste it into your support conversation.");
+    } catch (err) { setStatus("Could not copy diagnostics: " + String(err)); }
+    finally { setBusy(false); }
+  }
+  return <div className="updates-section">
+    <div className="setting-summary"><Activity size={18}/><div>
+      <strong>Generation diagnostics</strong>
+      <span>Records model backend, prompt and completion token totals, output limits, stop reason, timing and code review results. Prompts, generated code, source files and reasoning text are never stored in this log.</span>
+    </div></div>
+    <button type="button" className="model-action secondary" disabled={busy} onClick={() => void copyReport()}>
+      <ClipboardCheck size={15}/>{busy ? "Reading diagnostics…" : "Copy generation diagnostics"}
+    </button>
+    {status && <p role="status">{status}</p>}
+  </div>;
+}
+
 function SettingsModal({ theme, setTheme, onClose, engine, model, progress, downloading, modelBusy, modelPath, modelId, setModelId, downloadDir, chooseDownloadDir, resetDownloadDir, threads, setThreads, contextTokens, setContextTokens, autoLoad, setAutoLoad, download, load, unload, choose }: {
   theme: WorkspaceState["theme"];
   setTheme: (theme: WorkspaceState["theme"]) => void;
@@ -182,6 +212,7 @@ function SettingsModal({ theme, setTheme, onClose, engine, model, progress, down
       <div className="settings-section"><h3>Local inference</h3><p>Download or select a GGUF model, then load it into memory. The CPU runtime is always available; Windows builds also bundle an opt-in experimental NVIDIA CUDA runtime.</p>
         <ModelManager engine={engine} model={model} progress={progress} downloading={downloading} busy={modelBusy} modelPath={modelPath} modelId={modelId} setModelId={setModelId} downloadDir={downloadDir} chooseDownloadDir={chooseDownloadDir} resetDownloadDir={resetDownloadDir} threads={threads} setThreads={setThreads} contextTokens={contextTokens} setContextTokens={setContextTokens} autoLoad={autoLoad} setAutoLoad={setAutoLoad} onDownload={download} onLoad={load} onUnload={unload} onChoose={choose}/>
       </div>
+      <div className="settings-section"><h3>Generation diagnostics</h3><GenerationDiagnosticSettings/></div>
       <div className="settings-section"><h3>Application updates</h3><UpdateSettings/></div>
       <div className="settings-section"><h3>Privacy and safety</h3>
         <div className="setting-summary"><ShieldCheck size={18}/><div><strong>Your data stays on this computer</strong><span>Chats stay local. Your selected project can be inspected on request and edited only after approving each proposed file change. No shell execution. Update checks reach the official GitHub API on request.</span></div></div>
